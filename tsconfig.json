@@ -24,8 +24,8 @@
       "@auth/*": ["src/auth/*"],
       "@observability/*": ["src/observability/*"]
     },
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
-  "include": ["src/**/*", "scripts/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "coverage"]
 }
