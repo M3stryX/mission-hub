@@ -1,0 +1,76 @@
+{
+  "format": "mission-hub-legacy-export-v1",
+  "generated_at": "2026-09-30T00:00:00.000Z",
+  "source_basename": "fixture.db",
+  "missions": [
+    {
+      "id": 10,
+      "title": "Parent mission",
+      "body": "PostgreSQL migration rehearsal parent",
+      "status": "in_progress",
+      "priority": 1,
+      "due_at": null,
+      "source": "fixture",
+      "tags": "migration,test",
+      "recurrence": null,
+      "parent_id": null,
+      "created_at": "2026-09-29T00:00:00.000Z",
+      "updated_at": "2026-09-29T00:00:00.000Z"
+    },
+    {
+      "id": 11,
+      "title": "Child mission",
+      "body": "Semantic-free full text search parity check",
+      "status": "todo",
+      "priority": 2,
+      "due_at": null,
+      "source": "fixture",
+      "tags": "migration,test",
+      "recurrence": null,
+      "parent_id": 10,
+      "created_at": "2026-09-29T00:01:00.000Z",
+      "updated_at": "2026-09-29T00:01:00.000Z"
+    }
+  ],
+  "mission_checklist_items": [
+    {
+      "id": 20,
+      "mission_id": 11,
+      "item": "Preserve checklist",
+      "done": false,
+      "position": 0,
+      "created_at": "2026-09-29T00:02:00.000Z"
+    }
+  ],
+  "mission_sources": [
+    {
+      "id": 30,
+      "mission_id": 11,
+      "label": "Spec",
+      "path": "docs/spec.md",
+      "kind": "doc",
+      "created_at": "2026-09-29T00:03:00.000Z"
+    }
+  ],
+  "mission_events": [
+    {
+      "id": 40,
+      "mission_id": 11,
+      "actor": "mcp",
+      "kind": "create",
+      "payload": {
+        "status": "todo"
+      },
+      "created_at": "2026-09-29T00:04:00.000Z"
+    }
+  ],
+  "cursor_sessions": [
+    {
+      "id": 50,
+      "chat_id": "legacy-chat",
+      "mission_id": 11,
+      "owner": "lyra",
+      "workspace": "/legacy"
+    }
+  ]
+}

@@ -4,11 +4,27 @@ on:
   pull_request:
     branches: [staging, main]
   push:
-    branches: [staging, main]
+    branches: [staging, main, "feature/**"]
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: mission_hub
+          POSTGRES_PASSWORD: mission_hub_test
+          POSTGRES_DB: mission_hub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mission_hub -d mission_hub_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://mission_hub:mission_hub_test@localhost:5432/mission_hub_test
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +42,12 @@ jobs:
 
       - name: TypeCheck
         run: pnpm typecheck
+
+      - name: Migrate ephemeral PostgreSQL
+        run: pnpm db:migrate
+
+      - name: Import representative legacy fixture
+        run: pnpm legacy:import tests/fixtures/legacy-export.json
 
       - name: Test
         run: pnpm test

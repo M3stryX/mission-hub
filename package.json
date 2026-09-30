@@ -8,11 +8,12 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src tests",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "lint": "eslint src scripts tests",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "tsx scripts/migrate.ts",
+    "legacy:export": "python3 scripts/export-legacy-sqlite.py",
+    "legacy:import": "tsx scripts/import-legacy.ts"
   },
   "dependencies": {
     "hono": "^4.6.0",
@@ -31,8 +32,7 @@
     "eslint": "^9.10.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "vitest": "^2.1.0",
-    "drizzle-kit": "^0.26.0"
+    "vitest": "^2.1.0"
   },
   "engines": {
     "node": ">=22.0.0"
