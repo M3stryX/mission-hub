@@ -43,7 +43,9 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
         requestInit: { headers: { Authorization: 'Bearer mcp-token' } },
         fetch: async (input, init) => {
           const request = new Request(input, init);
-          return app.fetch(request);
+          const headers = new Headers(request.headers);
+          headers.set('host', 'localhost');
+          return app.fetch(new Request(request, { headers }));
         },
       },
     );

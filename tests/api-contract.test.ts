@@ -22,7 +22,12 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     { clientId: 'contract-test', token: 'contract-token', scopes: new Set(allScopes) },
   ];
   const app = createApp(new MissionHubStore(pool), credentials);
-  const auth = { Authorization: 'Bearer contract-token', 'Content-Type': 'application/json' };
+  const host = { Host: 'localhost' };
+  const auth = {
+    ...host,
+    Authorization: 'Bearer contract-token',
+    'Content-Type': 'application/json',
+  };
 
   beforeEach(async () => {
     await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions RESTART IDENTITY CASCADE');
@@ -33,12 +38,22 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   });
 
   it('exposes liveness and database readiness', async () => {
-    expect((await app.request('http://localhost/health')).status).toBe(200);
-    expect((await app.request('http://localhost/ready')).status).toBe(200);
+    expect(
+      (await app.request('http://localhost/health', { headers: host })).status,
+    ).toBe(200);
+    expect(
+      (await app.request('http://localhost/ready', { headers: host })).status,
+    ).toBe(200);
   });
 
   it('rejects protected routes without a valid service credential', async () => {
-    expect((await app.request('http://localhost/api/v1/missions')).status).toBe(401);
+    expect(
+      (
+        await app.request('http://localhost/api/v1/missions', {
+          headers: host,
+        })
+      ).status,
+    ).toBe(401);
   });
 
   it('creates and updates a mission with durable audit events', async () => {
