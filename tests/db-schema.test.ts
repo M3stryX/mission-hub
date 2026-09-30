@@ -8,6 +8,29 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
 
   beforeAll(async () => {
     await pool.query('SELECT 1');
+    await pool.query(
+      'TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions RESTART IDENTITY CASCADE',
+    );
+    await pool.query(
+      `INSERT INTO missions(
+        id, title, body, status, priority, source, tags, created_at, updated_at
+      ) VALUES
+        (10, 'Parent mission', 'PostgreSQL migration rehearsal parent', 'in_progress', 1, 'fixture', 'migration,test', now(), now()),
+        (11, 'Child mission', 'Semantic-free full text search parity check', 'todo', 2, 'fixture', 'migration,test', now(), now())`,
+    );
+    await pool.query('UPDATE missions SET parent_id = 10 WHERE id = 11');
+    await pool.query(
+      `INSERT INTO mission_checklist_items(id, mission_id, item, done, position)
+       VALUES (20, 11, 'Preserve checklist', false, 0)`,
+    );
+    await pool.query(
+      `INSERT INTO mission_sources(id, mission_id, label, path, kind)
+       VALUES (30, 11, 'Spec', 'docs/spec.md', 'doc')`,
+    );
+    await pool.query(
+      `INSERT INTO mission_events(id, mission_id, actor, kind, payload)
+       VALUES (40, 11, 'mcp', 'create', '{"status":"todo"}'::jsonb)`,
+    );
   });
 
   afterAll(async () => {

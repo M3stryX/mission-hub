@@ -33,16 +33,16 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   });
 
   it('exposes liveness and database readiness', async () => {
-    expect((await app.request('/health')).status).toBe(200);
-    expect((await app.request('/ready')).status).toBe(200);
+    expect((await app.request('http://localhost/health')).status).toBe(200);
+    expect((await app.request('http://localhost/ready')).status).toBe(200);
   });
 
   it('rejects protected routes without a valid service credential', async () => {
-    expect((await app.request('/api/v1/missions')).status).toBe(401);
+    expect((await app.request('http://localhost/api/v1/missions')).status).toBe(401);
   });
 
   it('creates and updates a mission with durable audit events', async () => {
-    const create = await app.request('/api/v1/missions', {
+    const create = await app.request('http://localhost/api/v1/missions', {
       method: 'POST',
       headers: auth,
       body: JSON.stringify({ title: 'Contract mission', status: 'todo', priority: 1 }),
@@ -50,7 +50,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     expect(create.status).toBe(201);
     const created = (await create.json()) as { mission: { id: number } };
 
-    const update = await app.request(`/api/v1/missions/${created.mission.id}`, {
+    const update = await app.request(`http://localhost/api/v1/missions/${created.mission.id}`, {
       method: 'PATCH',
       headers: auth,
       body: JSON.stringify({ status: 'in_progress' }),
@@ -65,14 +65,14 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   });
 
   it('records run transitions, typed summaries and evidence references', async () => {
-    const missionResponse = await app.request('/api/v1/missions', {
+    const missionResponse = await app.request('http://localhost/api/v1/missions', {
       method: 'POST',
       headers: auth,
       body: JSON.stringify({ title: 'Run mission' }),
     });
     const mission = (await missionResponse.json()) as { mission: { id: number } };
 
-    const runResponse = await app.request('/api/v1/runs', {
+    const runResponse = await app.request('http://localhost/api/v1/runs', {
       method: 'POST',
       headers: auth,
       body: JSON.stringify({
@@ -89,7 +89,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
 
     expect(
       (
-        await app.request(`/api/v1/runs/${run.run.id}/status`, {
+        await app.request(`http://localhost/api/v1/runs/${run.run.id}/status`, {
           method: 'PATCH',
           headers: auth,
           body: JSON.stringify({ status: 'COMPLETED', reviewState: 'APPROVED' }),
@@ -99,7 +99,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
 
     expect(
       (
-        await app.request(`/api/v1/runs/${run.run.id}/summaries`, {
+        await app.request(`http://localhost/api/v1/runs/${run.run.id}/summaries`, {
           method: 'POST',
           headers: auth,
           body: JSON.stringify({ type: 'reviewer_validated', content: 'Validated.' }),
@@ -109,7 +109,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
 
     expect(
       (
-        await app.request(`/api/v1/runs/${run.run.id}/evidence`, {
+        await app.request(`http://localhost/api/v1/runs/${run.run.id}/evidence`, {
           method: 'POST',
           headers: auth,
           body: JSON.stringify({ kind: 'commit', label: 'Validated commit', uri: 'https://example.invalid/commit/1' }),
@@ -117,7 +117,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       ).status,
     ).toBe(201);
 
-    const events = await app.request(`/api/v1/runs/${run.run.id}/events`, { headers: auth });
+    const events = await app.request(`http://localhost/api/v1/runs/${run.run.id}/events`, { headers: auth });
     const eventBody = (await events.json()) as { events: Array<{ kind: string }> };
     expect(eventBody.events.map((event) => event.kind)).toEqual([
       'run.created',

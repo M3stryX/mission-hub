@@ -38,7 +38,7 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
       { versionNegotiation: { mode: 'auto' } },
     );
     const transport = new StreamableHTTPClientTransport(
-      new URL('http://mission-hub.test/mcp'),
+      new URL('http://localhost/mcp'),
       {
         requestInit: { headers: { Authorization: 'Bearer mcp-token' } },
         fetch: async (input, init) => {
