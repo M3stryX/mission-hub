@@ -85,6 +85,8 @@ export function createApp(
     hostHeaderValidation([
       'localhost',
       '127.0.0.1',
+      'mission.lan',
+      'mission-staging.lan',
       'mission-hub-staging.lan',
       'mission-hub.lan',
       'mission-hub-staging.mestryx.dev',
