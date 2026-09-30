@@ -87,6 +87,7 @@ export function createApp(
       '127.0.0.1',
       'mission-hub-staging.lan',
       'mission-hub.lan',
+      'mission-hub-staging.mestryx.dev',
     ]),
   );
 
