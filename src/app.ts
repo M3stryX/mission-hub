@@ -1,5 +1,6 @@
-import { createMcpHonoApp } from '@modelcontextprotocol/hono';
+import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { createMcpHandler } from '@modelcontextprotocol/server';
+import { Hono } from 'hono';
 import { z } from 'zod';
 import {
   authenticateBearer,
@@ -74,15 +75,20 @@ export function createApp(
   store: MissionHubStore,
   credentials: readonly ClientCredential[],
 ) {
-  const app = createMcpHonoApp({
-    host: '0.0.0.0',
-    allowedHosts: [
+  // Prefer Hono + Host validation over createMcpHonoApp: the latter's global
+  // JSON body middleware returns plain-text 400 "Invalid JSON" for GET requests
+  // that carry Content-Type: application/json with an empty body. MCP parses
+  // its own body via createMcpHandler.
+  const app = new Hono();
+  app.use(
+    '*',
+    hostHeaderValidation([
       'localhost',
       '127.0.0.1',
       'mission-hub-staging.lan',
       'mission-hub.lan',
-    ],
-  });
+    ]),
+  );
 
   function principalFor(
     authorization: string | undefined,
