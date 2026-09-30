@@ -1,7 +1,17 @@
-import { Hono } from 'hono';
+import 'dotenv/config';
+import { serve } from '@hono/node-server';
+import { Pool } from 'pg';
+import { createApp } from './app.js';
+import { loadClientCredentials } from './auth/config.js';
+import { MissionHubStore } from './db/store.js';
 
-export const app = new Hono();
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const store = new MissionHubStore(pool);
+const app = createApp(store, loadClientCredentials());
 
-app.get('/health', (c) => c.json({ status: 'ok' }));
+const port = Number(process.env.PORT ?? 3000);
+const hostname = process.env.HOST ?? '0.0.0.0';
 
-export default app;
+serve({ fetch: app.fetch, port, hostname }, (info) => {
+  console.error(`[mission-hub] listening on http://${hostname}:${info.port}`);
+});

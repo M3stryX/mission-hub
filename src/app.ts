@@ -1,0 +1,255 @@
+import { createMcpHonoApp } from '@modelcontextprotocol/hono';
+import { createMcpHandler } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+import {
+  authenticateBearer,
+  hasScopes,
+  type ClientCredential,
+  type Principal,
+  type Scope,
+} from './auth/config.js';
+import type { MissionHubStore } from './db/store.js';
+import { buildMcpServer } from './mcp/server.js';
+
+const missionStatus = z.enum([
+  'backlog',
+  'todo',
+  'in_progress',
+  'review',
+  'done',
+  'blocked',
+]);
+
+const createMissionSchema = z.object({
+  title: z.string().min(1),
+  body: z.string().nullable().optional(),
+  status: missionStatus.optional(),
+  priority: z.number().int().min(1).max(5).optional(),
+  dueAt: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
+  tags: z.string().nullable().optional(),
+  recurrence: z.string().nullable().optional(),
+  parentId: z.number().int().positive().nullable().optional(),
+});
+
+const updateMissionSchema = createMissionSchema.partial();
+
+const createRunSchema = z.object({
+  missionId: z.number().int().positive(),
+  runtime: z.string().min(1),
+  agent: z.string().min(1),
+  externalSessionId: z.string().min(1),
+  externalRunId: z.string().min(1),
+  correlationId: z.string().nullable().optional(),
+  provider: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+const updateRunStatusSchema = z.object({
+  status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
+  reviewState: z
+    .enum(['NONE', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'])
+    .optional(),
+});
+
+const summarySchema = z.object({
+  type: z.enum(['agent_self_report', 'reviewer_validated', 'operator_note']),
+  content: z.string().min(1),
+});
+
+const evidenceSchema = z.object({
+  kind: z.string().min(1),
+  label: z.string().min(1),
+  uri: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+function parseId(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function createApp(
+  store: MissionHubStore,
+  credentials: readonly ClientCredential[],
+) {
+  const app = createMcpHonoApp({
+    host: '0.0.0.0',
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      'mission-hub-staging.lan',
+      'mission-hub.lan',
+    ],
+  });
+
+  function principalFor(
+    authorization: string | undefined,
+    scopes: readonly Scope[],
+  ): Principal | null {
+    const principal = authenticateBearer(authorization, credentials);
+    if (!principal || !hasScopes(principal, scopes)) {
+      return null;
+    }
+    return principal;
+  }
+
+  app.get('/health', (c) => c.json({ status: 'ok' }));
+
+  app.get('/ready', async (c) => {
+    try {
+      await store.ready();
+      return c.json({ status: 'ready' });
+    } catch {
+      return c.json({ status: 'not_ready' }, 503);
+    }
+  });
+
+  app.get('/api/v1/missions', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['missions:read']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    return c.json({ missions: await store.listMissions(c.req.query('q')) });
+  });
+
+  app.get('/api/v1/missions/:id', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['missions:read']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const id = parseId(c.req.param('id'));
+    if (!id) return c.json({ error: 'invalid_id' }, 400);
+    const mission = await store.getMission(id);
+    return mission ? c.json({ mission }) : c.json({ error: 'not_found' }, 404);
+  });
+
+  app.post('/api/v1/missions', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['missions:write']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const parsed = createMissionSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const mission = await store.createMission(parsed.data, principal.clientId);
+    return c.json({ mission }, 201);
+  });
+
+  app.patch('/api/v1/missions/:id', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['missions:write']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const id = parseId(c.req.param('id'));
+    if (!id) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = updateMissionSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const mission = await store.updateMission(id, parsed.data, principal.clientId);
+    return mission ? c.json({ mission }) : c.json({ error: 'not_found' }, 404);
+  });
+
+  app.get('/api/v1/missions/:id/runs', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['runs:read']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    return c.json({ runs: await store.listRunsForMission(missionId) });
+  });
+
+  app.post('/api/v1/runs', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['runs:write']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const parsed = createRunSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const run = await store.createRun(parsed.data, principal.clientId);
+    return c.json({ run }, 201);
+  });
+
+  app.patch('/api/v1/runs/:id/status', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['runs:write']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const runId = parseId(c.req.param('id'));
+    if (!runId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = updateRunStatusSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const run = await store.updateRunStatus(
+      runId,
+      parsed.data.status,
+      parsed.data.reviewState,
+      principal.clientId,
+    );
+    return run ? c.json({ run }) : c.json({ error: 'not_found' }, 404);
+  });
+
+  app.get('/api/v1/runs/:id/events', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['runs:read']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const runId = parseId(c.req.param('id'));
+    if (!runId) return c.json({ error: 'invalid_id' }, 400);
+    return c.json({ events: await store.listRunEvents(runId) });
+  });
+
+  app.post('/api/v1/runs/:id/summaries', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['summaries:write']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const runId = parseId(c.req.param('id'));
+    if (!runId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = summarySchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const summary = await store.addSummary(
+      runId,
+      parsed.data.type,
+      parsed.data.content,
+      principal.clientId,
+    );
+    return c.json({ summary }, 201);
+  });
+
+  app.get('/api/v1/runs/:id/summaries', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['summaries:read']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const runId = parseId(c.req.param('id'));
+    if (!runId) return c.json({ error: 'invalid_id' }, 400);
+    return c.json({ summaries: await store.listSummaries(runId) });
+  });
+
+  app.post('/api/v1/runs/:id/evidence', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['evidence:write']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const runId = parseId(c.req.param('id'));
+    if (!runId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = evidenceSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const evidence = await store.addEvidence(
+      runId,
+      parsed.data.kind,
+      parsed.data.label,
+      parsed.data.uri,
+      parsed.data.metadata ?? null,
+    );
+    return c.json({ evidence }, 201);
+  });
+
+  app.get('/api/v1/runs/:id/evidence', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), ['evidence:read']);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const runId = parseId(c.req.param('id'));
+    if (!runId) return c.json({ error: 'invalid_id' }, 400);
+    return c.json({ evidence: await store.listEvidence(runId) });
+  });
+
+  app.all('/mcp', async (c) => {
+    const principal = principalFor(c.req.header('authorization'), [
+      'missions:read',
+      'missions:write',
+      'runs:read',
+      'runs:write',
+      'summaries:read',
+      'summaries:write',
+      'evidence:read',
+      'evidence:write',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+
+    const handler = createMcpHandler(
+      () => buildMcpServer(store, principal),
+      { responseMode: 'json' },
+    );
+    return handler.fetch(c.req.raw, { parsedBody: c.get('parsedBody') });
+  });
+
+  return app;
+}
