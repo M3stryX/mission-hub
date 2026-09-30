@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import type { Principal } from '../auth/config.js';
+import { hasScopes, type Principal, type Scope } from '../auth/config.js';
 import type { MissionHubStore } from '../db/store.js';
 
 function toolResult(value: unknown) {
@@ -8,6 +8,25 @@ function toolResult(value: unknown) {
     content: [{ type: 'text' as const, text: JSON.stringify(value) }],
     structuredContent: { result: value },
   };
+}
+
+function forbidden(required: readonly Scope[]) {
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({ error: 'forbidden', required }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+function requireScopes(
+  principal: Principal,
+  required: readonly Scope[],
+): boolean {
+  return hasScopes(principal, required);
 }
 
 export function buildMcpServer(
@@ -25,7 +44,10 @@ export function buildMcpServer(
       description: 'List or search durable missions',
       inputSchema: z.object({ query: z.string().optional() }),
     },
-    async ({ query }) => toolResult(await store.listMissions(query)),
+    async ({ query }) =>
+      requireScopes(principal, ['missions:read'])
+        ? toolResult(await store.listMissions(query))
+        : forbidden(['missions:read']),
   );
 
   server.registerTool(
@@ -34,7 +56,10 @@ export function buildMcpServer(
       description: 'Get one durable mission by id',
       inputSchema: z.object({ id: z.number().int().positive() }),
     },
-    async ({ id }) => toolResult(await store.getMission(id)),
+    async ({ id }) =>
+      requireScopes(principal, ['missions:read'])
+        ? toolResult(await store.getMission(id))
+        : forbidden(['missions:read']),
   );
 
   server.registerTool(
@@ -49,7 +74,10 @@ export function buildMcpServer(
         parentId: z.number().int().positive().nullable().optional(),
       }),
     },
-    async (input) => toolResult(await store.createMission(input, principal.clientId)),
+    async (input) =>
+      requireScopes(principal, ['missions:write'])
+        ? toolResult(await store.createMission(input, principal.clientId))
+        : forbidden(['missions:write']),
   );
 
   server.registerTool(
@@ -58,7 +86,10 @@ export function buildMcpServer(
       description: 'List execution runs for a mission',
       inputSchema: z.object({ missionId: z.number().int().positive() }),
     },
-    async ({ missionId }) => toolResult(await store.listRunsForMission(missionId)),
+    async ({ missionId }) =>
+      requireScopes(principal, ['runs:read'])
+        ? toolResult(await store.listRunsForMission(missionId))
+        : forbidden(['runs:read']),
   );
 
   server.registerTool(
@@ -76,7 +107,10 @@ export function buildMcpServer(
         model: z.string().nullable().optional(),
       }),
     },
-    async (input) => toolResult(await store.createRun(input, principal.clientId)),
+    async (input) =>
+      requireScopes(principal, ['runs:write'])
+        ? toolResult(await store.createRun(input, principal.clientId))
+        : forbidden(['runs:write']),
   );
 
   server.registerTool(
@@ -92,14 +126,16 @@ export function buildMcpServer(
       }),
     },
     async ({ runId, status, reviewState }) =>
-      toolResult(
-        await store.updateRunStatus(
-          runId,
-          status,
-          reviewState,
-          principal.clientId,
-        ),
-      ),
+      requireScopes(principal, ['runs:write'])
+        ? toolResult(
+            await store.updateRunStatus(
+              runId,
+              status,
+              reviewState,
+              principal.clientId,
+            ),
+          )
+        : forbidden(['runs:write']),
   );
 
   server.registerTool(
@@ -113,9 +149,11 @@ export function buildMcpServer(
       }),
     },
     async ({ runId, type, content }) =>
-      toolResult(
-        await store.addSummary(runId, type, content, principal.clientId),
-      ),
+      requireScopes(principal, ['summaries:write'])
+        ? toolResult(
+            await store.addSummary(runId, type, content, principal.clientId),
+          )
+        : forbidden(['summaries:write']),
   );
 
   server.registerTool(
@@ -131,15 +169,17 @@ export function buildMcpServer(
       }),
     },
     async ({ runId, kind, label, uri, metadata }) =>
-      toolResult(
-        await store.addEvidence(
-          runId,
-          kind,
-          label,
-          uri,
-          metadata ?? null,
-        ),
-      ),
+      requireScopes(principal, ['evidence:write'])
+        ? toolResult(
+            await store.addEvidence(
+              runId,
+              kind,
+              label,
+              uri,
+              metadata ?? null,
+            ),
+          )
+        : forbidden(['evidence:write']),
   );
 
   return server;

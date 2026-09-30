@@ -232,23 +232,17 @@ export function createApp(
   });
 
   app.all('/mcp', async (c) => {
-    const principal = principalFor(c.req.header('authorization'), [
-      'missions:read',
-      'missions:write',
-      'runs:read',
-      'runs:write',
-      'summaries:read',
-      'summaries:write',
-      'evidence:read',
-      'evidence:write',
-    ]);
+    const principal = authenticateBearer(
+      c.req.header('authorization'),
+      credentials,
+    );
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
 
     const handler = createMcpHandler(
       () => buildMcpServer(store, principal),
       { responseMode: 'json' },
     );
-    return handler.fetch(c.req.raw, { parsedBody: c.get('parsedBody') });
+    return handler.fetch(c.req.raw);
   });
 
   return app;
