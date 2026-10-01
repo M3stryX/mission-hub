@@ -17,7 +17,10 @@ import {
   ClaimAlreadyReleasedError,
   ClaimConflictError,
   ClaimExpiredError,
+  ClaimFencedError,
   ClaimNotOwnedError,
+  ClaimReleaseIncompleteError,
+  ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
   MAX_CLAIM_LEASE_SECONDS,
   VERIFY_FIXTURE_TAG,
@@ -581,6 +584,29 @@ export function createApp(
           409,
         );
       }
+      if (error instanceof ClaimReleaseIncompleteError) {
+        return c.json(
+          {
+            error: 'claim_release_incomplete',
+            claimId: error.claimId,
+            runId: error.runId,
+            missing: error.missing,
+          },
+          409,
+        );
+      }
+      if (error instanceof ClaimReleaseInconsistentError) {
+        return c.json(
+          {
+            error: 'claim_release_inconsistent',
+            claimId: error.claimId,
+            runId: error.runId,
+            runStatus: error.runStatus,
+            reason: error.reason,
+          },
+          409,
+        );
+      }
       throw error;
     }
   });
@@ -615,13 +641,27 @@ export function createApp(
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = updateRunStatusSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const run = await store.updateRunStatus(
-      runId,
-      parsed.data.status,
-      parsed.data.reviewState,
-      principal.clientId,
-    );
-    return run ? c.json({ run }) : c.json({ error: 'not_found' }, 404);
+    try {
+      const run = await store.updateRunStatus(
+        runId,
+        parsed.data.status,
+        parsed.data.reviewState,
+        principal.clientId,
+      );
+      return run ? c.json({ run }) : c.json({ error: 'not_found' }, 404);
+    } catch (error) {
+      if (error instanceof ClaimFencedError) {
+        return c.json(
+          {
+            error: 'claim_fenced',
+            missionId: error.missionId,
+            claimId: error.claimId,
+          },
+          403,
+        );
+      }
+      throw error;
+    }
   });
 
   app.get('/api/v1/runs/:id/events', async (c) => {
@@ -643,13 +683,27 @@ export function createApp(
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = summarySchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const summary = await store.addSummary(
-      runId,
-      parsed.data.type,
-      parsed.data.content,
-      principal.clientId,
-    );
-    return c.json({ summary }, 201);
+    try {
+      const summary = await store.addSummary(
+        runId,
+        parsed.data.type,
+        parsed.data.content,
+        principal.clientId,
+      );
+      return c.json({ summary }, 201);
+    } catch (error) {
+      if (error instanceof ClaimFencedError) {
+        return c.json(
+          {
+            error: 'claim_fenced',
+            missionId: error.missionId,
+            claimId: error.claimId,
+          },
+          403,
+        );
+      }
+      throw error;
+    }
   });
 
   app.get('/api/v1/runs/:id/summaries', async (c) => {
@@ -671,15 +725,29 @@ export function createApp(
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = evidenceSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const evidence = await store.addEvidence(
-      runId,
-      parsed.data.kind,
-      parsed.data.label,
-      parsed.data.uri,
-      parsed.data.metadata ?? null,
-      principal.clientId,
-    );
-    return c.json({ evidence }, 201);
+    try {
+      const evidence = await store.addEvidence(
+        runId,
+        parsed.data.kind,
+        parsed.data.label,
+        parsed.data.uri,
+        parsed.data.metadata ?? null,
+        principal.clientId,
+      );
+      return c.json({ evidence }, 201);
+    } catch (error) {
+      if (error instanceof ClaimFencedError) {
+        return c.json(
+          {
+            error: 'claim_fenced',
+            missionId: error.missionId,
+            claimId: error.claimId,
+          },
+          403,
+        );
+      }
+      throw error;
+    }
   });
 
   app.get('/api/v1/runs/:id/evidence', async (c) => {

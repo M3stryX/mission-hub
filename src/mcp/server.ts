@@ -5,7 +5,10 @@ import {
   ClaimAlreadyReleasedError,
   ClaimConflictError,
   ClaimExpiredError,
+  ClaimFencedError,
   ClaimNotOwnedError,
+  ClaimReleaseIncompleteError,
+  ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
   MAX_CLAIM_LEASE_SECONDS,
   type MissionHubStore,
@@ -426,6 +429,21 @@ export function buildMcpServer(
             claimId: error.claimId,
           });
         }
+        if (error instanceof ClaimReleaseIncompleteError) {
+          return toolError('claim_release_incomplete', {
+            claimId: error.claimId,
+            runId: error.runId,
+            missing: error.missing,
+          });
+        }
+        if (error instanceof ClaimReleaseInconsistentError) {
+          return toolError('claim_release_inconsistent', {
+            claimId: error.claimId,
+            runId: error.runId,
+            runStatus: error.runStatus,
+            reason: error.reason,
+          });
+        }
         throw error;
       }
     },
@@ -476,17 +494,29 @@ export function buildMcpServer(
           .optional(),
       }),
     },
-    async ({ runId, status, reviewState }) =>
-      requireScopes(principal, ['runs:write'])
-        ? toolResult(
-            await store.updateRunStatus(
-              runId,
-              status,
-              reviewState,
-              principal.clientId,
-            ),
-          )
-        : forbidden(['runs:write']),
+    async ({ runId, status, reviewState }) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        return toolResult(
+          await store.updateRunStatus(
+            runId,
+            status,
+            reviewState,
+            principal.clientId,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ClaimFencedError) {
+          return toolError('claim_fenced', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
@@ -511,12 +541,24 @@ export function buildMcpServer(
         content: z.string().min(1),
       }),
     },
-    async ({ runId, type, content }) =>
-      requireScopes(principal, ['summaries:write'])
-        ? toolResult(
-            await store.addSummary(runId, type, content, principal.clientId),
-          )
-        : forbidden(['summaries:write']),
+    async ({ runId, type, content }) => {
+      if (!requireScopes(principal, ['summaries:write'])) {
+        return forbidden(['summaries:write']);
+      }
+      try {
+        return toolResult(
+          await store.addSummary(runId, type, content, principal.clientId),
+        );
+      } catch (error) {
+        if (error instanceof ClaimFencedError) {
+          return toolError('claim_fenced', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
@@ -543,19 +585,31 @@ export function buildMcpServer(
         metadata: z.record(z.string(), z.unknown()).nullable().optional(),
       }),
     },
-    async ({ runId, kind, label, uri, metadata }) =>
-      requireScopes(principal, ['evidence:write'])
-        ? toolResult(
-            await store.addEvidence(
-              runId,
-              kind,
-              label,
-              uri,
-              metadata ?? null,
-              principal.clientId,
-            ),
-          )
-        : forbidden(['evidence:write']),
+    async ({ runId, kind, label, uri, metadata }) => {
+      if (!requireScopes(principal, ['evidence:write'])) {
+        return forbidden(['evidence:write']);
+      }
+      try {
+        return toolResult(
+          await store.addEvidence(
+            runId,
+            kind,
+            label,
+            uri,
+            metadata ?? null,
+            principal.clientId,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ClaimFencedError) {
+          return toolError('claim_fenced', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(

@@ -585,11 +585,64 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     );
     expect(reclaim.status).toBe(201);
     const second = (await reclaim.json()) as {
-      claim: { id: number; client_id: string };
+      claim: { id: number; client_id: string; run_id: number };
       expiredPreviousClaimId: number | null;
+      expiryDiagnosis: { cause: string; known: boolean } | null;
     };
     expect(second.claim.client_id).toBe('other-agent');
     expect(second.expiredPreviousClaimId).toBe(first.claim.id);
+    expect(second.expiryDiagnosis?.cause).toBe('UNKNOWN');
+    expect(second.expiryDiagnosis?.known).toBe(false);
+
+    const oldRun = await pool.query<{ status: string }>(
+      'SELECT status FROM execution_runs WHERE id = $1',
+      [first.claim.run_id],
+    );
+    expect(oldRun.rows[0].status).toBe('FAILED');
+
+    const fenced = await app.request(
+      `http://localhost/api/v1/runs/${first.claim.run_id}/status`,
+      {
+        method: 'PATCH',
+        headers: auth,
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      },
+    );
+    expect(fenced.status).toBe(403);
+
+    const incomplete = await other.request(
+      `http://localhost/api/v1/claims/${second.claim.id}/release`,
+      {
+        method: 'POST',
+        headers: otherAuth,
+        body: JSON.stringify({ reason: 'completed' }),
+      },
+    );
+    expect(incomplete.status).toBe(409);
+
+    await other.request(
+      `http://localhost/api/v1/runs/${second.claim.run_id}/summaries`,
+      {
+        method: 'POST',
+        headers: otherAuth,
+        body: JSON.stringify({
+          type: 'agent_self_report',
+          content: 'done with evidence',
+        }),
+      },
+    );
+    await other.request(
+      `http://localhost/api/v1/runs/${second.claim.run_id}/evidence`,
+      {
+        method: 'POST',
+        headers: otherAuth,
+        body: JSON.stringify({
+          kind: 'ci',
+          label: 'proof',
+          uri: 'https://example.test/proof',
+        }),
+      },
+    );
 
     const released = await other.request(
       `http://localhost/api/v1/claims/${second.claim.id}/release`,
@@ -600,17 +653,23 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       },
     );
     expect(released.status).toBe(200);
+    const releasedRun = await pool.query<{ status: string }>(
+      'SELECT status FROM execution_runs WHERE id = $1',
+      [second.claim.run_id],
+    );
+    expect(releasedRun.rows[0].status).toBe('COMPLETED');
 
     const events = await app.request(
       `http://localhost/api/v1/missions/${mission.mission.id}/events`,
       { headers: auth },
     );
     const eventBody = (await events.json()) as {
-      events: Array<{ kind: string }>;
+      events: Array<{ kind: string; payload: Record<string, unknown> | null }>;
     };
     const kinds = eventBody.events.map((e) => e.kind);
     expect(kinds).toContain('claim.acquired');
     expect(kinds).toContain('claim.renewed');
+    expect(kinds).toContain('claim.expiry_diagnosis');
     expect(kinds).toContain('claim.expired');
     expect(kinds).toContain('claim.released');
 
@@ -620,5 +679,206 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     );
     expect(active.status).toBe(200);
     expect(((await active.json()) as { claim: unknown }).claim).toBeNull();
+  });
+
+  it('diagnoses expiry causes and fences stale owners', async () => {
+    const other = createApp(new MissionHubStore(pool), {
+      envCredentials: [
+        ...credentials,
+        {
+          clientId: 'other-agent',
+          token: 'other-token',
+          scopes: new Set(allScopes),
+        },
+      ],
+      adminToken,
+    });
+    const host = { Host: 'mission-hub.lan' };
+    const auth = {
+      ...host,
+      Authorization: 'Bearer contract-token',
+      'Content-Type': 'application/json',
+    };
+    const otherAuth = {
+      ...host,
+      Authorization: 'Bearer other-token',
+      'Content-Type': 'application/json',
+    };
+
+    async function claimAs(
+      clientApp: typeof app,
+      headers: Record<string, string>,
+      missionId: number,
+      suffix: string,
+    ) {
+      return clientApp.request(
+        `http://localhost/api/v1/missions/${missionId}/claim`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            runtime: 'cursor',
+            agent: `agent-${suffix}`,
+            externalSessionId: `session-${suffix}`,
+            externalRunId: `run-${suffix}`,
+            leaseSeconds: 60,
+          }),
+        },
+      );
+    }
+
+    async function forceExpire(claimId: number, ageLastSeen: boolean) {
+      await pool.query(
+        `UPDATE mission_claims
+         SET claimed_at = now() - interval '10 seconds',
+             expires_at = now() - interval '5 seconds'
+         WHERE id = $1`,
+        [claimId],
+      );
+      if (ageLastSeen) {
+        await pool.query(
+          `UPDATE agent_sessions AS s
+           SET last_seen_at = now() - interval '9 seconds'
+           FROM execution_runs AS r
+           JOIN mission_claims AS c ON c.run_id = r.id
+           WHERE c.id = $1 AND s.id = r.session_id`,
+          [claimId],
+        );
+      }
+    }
+
+    // 1) stale/open session
+    {
+      const created = await app.request('http://localhost/api/v1/missions', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ title: 'Expiry stale' }),
+      });
+      const mission = (await created.json()) as { mission: { id: number } };
+      const first = await claimAs(app, auth, mission.mission.id, 'stale-a');
+      const body = (await first.json()) as {
+        claim: { id: number; run_id: number };
+      };
+      await forceExpire(body.claim.id, true);
+      const reclaim = await claimAs(other, otherAuth, mission.mission.id, 'stale-b');
+      expect(reclaim.status).toBe(201);
+      const result = (await reclaim.json()) as {
+        expiryDiagnosis: { cause: string };
+      };
+      expect(result.expiryDiagnosis.cause).toBe('SESSION_STALE');
+      const run = await pool.query<{ status: string }>(
+        'SELECT status FROM execution_runs WHERE id = $1',
+        [body.claim.run_id],
+      );
+      expect(run.rows[0].status).toBe('FAILED');
+    }
+
+    // 2) session closed/aborted
+    {
+      const created = await app.request('http://localhost/api/v1/missions', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ title: 'Expiry closed' }),
+      });
+      const mission = (await created.json()) as { mission: { id: number } };
+      const first = await claimAs(app, auth, mission.mission.id, 'closed-a');
+      const body = (await first.json()) as {
+        claim: { id: number; run_id: number };
+      };
+      await pool.query(
+        `UPDATE agent_sessions AS s
+         SET status = 'CLOSED'::session_status, ended_at = now()
+         FROM execution_runs AS r
+         WHERE r.id = $1 AND s.id = r.session_id`,
+        [body.claim.run_id],
+      );
+      await forceExpire(body.claim.id, false);
+      const reclaim = await claimAs(other, otherAuth, mission.mission.id, 'closed-b');
+      const result = (await reclaim.json()) as {
+        expiryDiagnosis: { cause: string };
+      };
+      expect(result.expiryDiagnosis.cause).toBe('SESSION_CLOSED');
+    }
+
+    // 3) already-terminal run
+    {
+      const created = await app.request('http://localhost/api/v1/missions', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ title: 'Expiry terminal' }),
+      });
+      const mission = (await created.json()) as { mission: { id: number } };
+      const first = await claimAs(app, auth, mission.mission.id, 'term-a');
+      const body = (await first.json()) as {
+        claim: { id: number; run_id: number };
+      };
+      await pool.query(
+        `UPDATE execution_runs
+         SET status = 'COMPLETED'::run_status, finished_at = now()
+         WHERE id = $1`,
+        [body.claim.run_id],
+      );
+      await forceExpire(body.claim.id, false);
+      const reclaim = await claimAs(other, otherAuth, mission.mission.id, 'term-b');
+      const result = (await reclaim.json()) as {
+        expiryDiagnosis: { cause: string; runStatusAfter: string };
+      };
+      expect(result.expiryDiagnosis.cause).toBe('RUN_ALREADY_TERMINAL');
+      expect(result.expiryDiagnosis.runStatusAfter).toBe('COMPLETED');
+      const run = await pool.query<{ status: string }>(
+        'SELECT status FROM execution_runs WHERE id = $1',
+        [body.claim.run_id],
+      );
+      expect(run.rows[0].status).toBe('COMPLETED');
+    }
+
+    // 4) unknown cause (open session, recent last_seen)
+    {
+      const created = await app.request('http://localhost/api/v1/missions', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ title: 'Expiry unknown' }),
+      });
+      const mission = (await created.json()) as { mission: { id: number } };
+      const first = await claimAs(app, auth, mission.mission.id, 'unk-a');
+      const body = (await first.json()) as {
+        claim: { id: number; run_id: number };
+      };
+      await forceExpire(body.claim.id, false);
+      const reclaim = await claimAs(other, otherAuth, mission.mission.id, 'unk-b');
+      const result = (await reclaim.json()) as {
+        expiryDiagnosis: { cause: string; known: boolean };
+      };
+      expect(result.expiryDiagnosis.cause).toBe('UNKNOWN');
+      expect(result.expiryDiagnosis.known).toBe(false);
+    }
+
+    // 5) release failed couples run to FAILED; completed rejects FAILED run
+    {
+      const created = await app.request('http://localhost/api/v1/missions', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ title: 'Release coupling' }),
+      });
+      const mission = (await created.json()) as { mission: { id: number } };
+      const first = await claimAs(app, auth, mission.mission.id, 'rel-a');
+      const body = (await first.json()) as {
+        claim: { id: number; run_id: number };
+      };
+      const failedRelease = await app.request(
+        `http://localhost/api/v1/claims/${body.claim.id}/release`,
+        {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ reason: 'failed' }),
+        },
+      );
+      expect(failedRelease.status).toBe(200);
+      const run = await pool.query<{ status: string }>(
+        'SELECT status FROM execution_runs WHERE id = $1',
+        [body.claim.run_id],
+      );
+      expect(run.rows[0].status).toBe('FAILED');
+    }
   });
 });

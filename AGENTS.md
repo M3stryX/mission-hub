@@ -21,10 +21,11 @@ Standalone **mission + execution-trace** service (Hono + PostgreSQL + MCP).
 1. **SSOT** — Mission Hub owns durable missions, claims, runs, events, summaries, evidence. n8n is a client/dispatcher, not the claim store. Hindsight is memory, not operational state.
 2. **Business vs lock** — `mission.status` is business state only. Temporary ownership uses `mission_claims` (lease, renew, release, expiry reclaim).
 3. **Atomic claim** — Claim acquisition must create/bind session + run + claim + audit events in one transaction; no orphan claims.
-4. **REST ↔ MCP parity** — Every agent-facing write/read must exist on both surfaces unless documented otherwise.
-5. **Contract inventory** — Keep `src/contract/inventory.ts` and `docs/contract-inventory.json` aligned with enums, scopes, tables, REST routes, and MCP tools. `pnpm test:contract-inventory` (and CI) enforce this.
-6. **Migrations** — SQL under `migrations/`; applied on boot and via `pnpm db:migrate`. Never hand-edit production schema.
-7. **Destructive verify** — `verify:admin` cleanup is staging-only and gated by env (`MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY`). Refuse on prod.
+4. **Claim ↔ run coherence** — Release `completed` requires summary + evidence and a COMPLETED run (transitioned atomically if needed). `failed`/`abandoned` terminalize the run to FAILED. Expiry reclaim diagnoses the owner session/run (never invents a cause), records `claim.expiry_diagnosis`, fences the previous owner, and must not leave the previous run RUNNING.
+5. **REST ↔ MCP parity** — Every agent-facing write/read must exist on both surfaces unless documented otherwise.
+6. **Contract inventory** — Keep `src/contract/inventory.ts` and `docs/contract-inventory.json` aligned with enums, scopes, tables, REST routes, and MCP tools. `pnpm test:contract-inventory` (and CI) enforce this.
+7. **Migrations** — SQL under `migrations/`; applied on boot and via `pnpm db:migrate`. Never hand-edit production schema.
+8. **Destructive verify** — `verify:admin` cleanup is staging-only and gated by env (`MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY`). Refuse on prod.
 
 ## Git workflow
 
