@@ -8,6 +8,7 @@ Standalone **mission + execution-trace** service (Hono + PostgreSQL + MCP).
 | Prod | `mission-hub.lan` (Dokploy app `mission-hub`, branch `main`) |
 | Staging | `mission-hub-staging.lan` (Dokploy app `mission-hub-staging`, branch `staging`) |
 | Auth | Option A — hashed API clients in Postgres (`clients:admin` mint/revoke) |
+| Agent contract | [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) **v1** (authoritative over skills) |
 
 ## Non-goals (do not reopen without explicit operator ask)
 
@@ -23,7 +24,7 @@ Standalone **mission + execution-trace** service (Hono + PostgreSQL + MCP).
 3. **Atomic claim** — Claim acquisition must create/bind session + run + claim + audit events in one transaction; no orphan claims.
 4. **Claim ↔ run coherence** — Release `completed` requires summary + evidence and a COMPLETED run (transitioned atomically if needed). `failed`/`abandoned` terminalize the run to FAILED. Expiry reclaim diagnoses the owner session/run (never invents a cause), records `claim.expiry_diagnosis`, fences the previous owner, and must not leave the previous run RUNNING.
 5. **REST ↔ MCP parity** — Every agent-facing write/read must exist on both surfaces unless documented otherwise.
-6. **Contract inventory** — Keep `src/contract/inventory.ts` and `docs/contract-inventory.json` aligned with enums, scopes, tables, REST routes, and MCP tools. `pnpm test:contract-inventory` (and CI) enforce this.
+6. **Contract inventory** — Keep `src/contract/inventory.ts` and `docs/contract-inventory.json` aligned with enums, scopes, tables, REST routes, MCP tools, MCP descriptions, and `docs/AGENT_USAGE.md` `Contract-Version`. `pnpm test:contract-inventory` (and CI) enforce this.
 7. **Migrations** — SQL under `migrations/`; applied on boot and via `pnpm db:migrate`. Never hand-edit production schema.
 8. **Destructive verify** — `verify:admin` cleanup is staging-only and gated by env (`MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY`). Refuse on prod.
 
