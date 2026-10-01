@@ -27,7 +27,7 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE evidence, summaries, execution_events, mission_claims, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
   });
 
   afterAll(async () => {
@@ -69,6 +69,10 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
       'missions.sources.add',
       'missions.sources.remove',
       'missions.events.list',
+      'missions.claim.get',
+      'missions.claim',
+      'missions.claim.renew',
+      'missions.claim.release',
       'runs.list',
       'runs.create',
       'runs.updateStatus',

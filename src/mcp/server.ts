@@ -2,7 +2,15 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { hasScopes, type Principal, type Scope } from '../auth/config.js';
 import {
+  ClaimAlreadyReleasedError,
+  ClaimConflictError,
+  ClaimExpiredError,
+  ClaimFencedError,
+  ClaimNotOwnedError,
+  ClaimReleaseIncompleteError,
+  ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
+  MAX_CLAIM_LEASE_SECONDS,
   type MissionHubStore,
 } from '../db/store.js';
 
@@ -292,6 +300,156 @@ export function buildMcpServer(
   );
 
   server.registerTool(
+    'missions.claim.get',
+    {
+      description: 'Get the active (non-expired) claim for a mission, if any',
+      inputSchema: z.object({ missionId: z.number().int().positive() }),
+    },
+    async ({ missionId }) =>
+      requireScopes(principal, ['missions:read'])
+        ? toolResult({ claim: await store.getActiveClaim(missionId) })
+        : forbidden(['missions:read']),
+  );
+
+  server.registerTool(
+    'missions.claim',
+    {
+      description:
+        'Atomically claim a mission with a lease and create the linked execution run',
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        runtime: z.string().min(1),
+        agent: z.string().min(1),
+        externalSessionId: z.string().min(1),
+        externalRunId: z.string().min(1),
+        leaseSeconds: z
+          .number()
+          .int()
+          .positive()
+          .max(MAX_CLAIM_LEASE_SECONDS)
+          .optional(),
+        correlationId: z.string().nullable().optional(),
+        provider: z.string().nullable().optional(),
+        model: z.string().nullable().optional(),
+      }),
+    },
+    async (input) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        const result = await store.claimMission(input, principal.clientId);
+        return result
+          ? toolResult(result)
+          : toolError('not_found', { missionId: input.missionId });
+      } catch (error) {
+        if (error instanceof ClaimConflictError) {
+          return toolError('claim_conflict', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    'missions.claim.renew',
+    {
+      description: 'Renew/heartbeat an owned active claim lease',
+      inputSchema: z.object({
+        claimId: z.number().int().positive(),
+        leaseSeconds: z
+          .number()
+          .int()
+          .positive()
+          .max(MAX_CLAIM_LEASE_SECONDS)
+          .optional(),
+      }),
+    },
+    async ({ claimId, leaseSeconds }) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        const claim = await store.renewClaim(
+          claimId,
+          principal.clientId,
+          leaseSeconds,
+        );
+        return claim
+          ? toolResult({ claim })
+          : toolError('not_found', { claimId });
+      } catch (error) {
+        if (error instanceof ClaimNotOwnedError) {
+          return toolError('claim_not_owned', { claimId: error.claimId });
+        }
+        if (error instanceof ClaimExpiredError) {
+          return toolError('claim_expired', { claimId: error.claimId });
+        }
+        if (error instanceof ClaimAlreadyReleasedError) {
+          return toolError('claim_already_released', {
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    'missions.claim.release',
+    {
+      description: 'Release an owned claim with an explicit reason',
+      inputSchema: z.object({
+        claimId: z.number().int().positive(),
+        reason: z.enum(['completed', 'failed', 'abandoned']),
+      }),
+    },
+    async ({ claimId, reason }) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        const claim = await store.releaseClaim(
+          claimId,
+          principal.clientId,
+          reason,
+        );
+        return claim
+          ? toolResult({ claim })
+          : toolError('not_found', { claimId });
+      } catch (error) {
+        if (error instanceof ClaimNotOwnedError) {
+          return toolError('claim_not_owned', { claimId: error.claimId });
+        }
+        if (error instanceof ClaimAlreadyReleasedError) {
+          return toolError('claim_already_released', {
+            claimId: error.claimId,
+          });
+        }
+        if (error instanceof ClaimReleaseIncompleteError) {
+          return toolError('claim_release_incomplete', {
+            claimId: error.claimId,
+            runId: error.runId,
+            missing: error.missing,
+          });
+        }
+        if (error instanceof ClaimReleaseInconsistentError) {
+          return toolError('claim_release_inconsistent', {
+            claimId: error.claimId,
+            runId: error.runId,
+            runStatus: error.runStatus,
+            reason: error.reason,
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
     'runs.list',
     {
       description: 'List execution runs for a mission',
@@ -336,17 +494,29 @@ export function buildMcpServer(
           .optional(),
       }),
     },
-    async ({ runId, status, reviewState }) =>
-      requireScopes(principal, ['runs:write'])
-        ? toolResult(
-            await store.updateRunStatus(
-              runId,
-              status,
-              reviewState,
-              principal.clientId,
-            ),
-          )
-        : forbidden(['runs:write']),
+    async ({ runId, status, reviewState }) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        return toolResult(
+          await store.updateRunStatus(
+            runId,
+            status,
+            reviewState,
+            principal.clientId,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ClaimFencedError) {
+          return toolError('claim_fenced', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
@@ -371,12 +541,24 @@ export function buildMcpServer(
         content: z.string().min(1),
       }),
     },
-    async ({ runId, type, content }) =>
-      requireScopes(principal, ['summaries:write'])
-        ? toolResult(
-            await store.addSummary(runId, type, content, principal.clientId),
-          )
-        : forbidden(['summaries:write']),
+    async ({ runId, type, content }) => {
+      if (!requireScopes(principal, ['summaries:write'])) {
+        return forbidden(['summaries:write']);
+      }
+      try {
+        return toolResult(
+          await store.addSummary(runId, type, content, principal.clientId),
+        );
+      } catch (error) {
+        if (error instanceof ClaimFencedError) {
+          return toolError('claim_fenced', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
@@ -403,19 +585,31 @@ export function buildMcpServer(
         metadata: z.record(z.string(), z.unknown()).nullable().optional(),
       }),
     },
-    async ({ runId, kind, label, uri, metadata }) =>
-      requireScopes(principal, ['evidence:write'])
-        ? toolResult(
-            await store.addEvidence(
-              runId,
-              kind,
-              label,
-              uri,
-              metadata ?? null,
-              principal.clientId,
-            ),
-          )
-        : forbidden(['evidence:write']),
+    async ({ runId, kind, label, uri, metadata }) => {
+      if (!requireScopes(principal, ['evidence:write'])) {
+        return forbidden(['evidence:write']);
+      }
+      try {
+        return toolResult(
+          await store.addEvidence(
+            runId,
+            kind,
+            label,
+            uri,
+            metadata ?? null,
+            principal.clientId,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ClaimFencedError) {
+          return toolError('claim_fenced', {
+            missionId: error.missionId,
+            claimId: error.claimId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
