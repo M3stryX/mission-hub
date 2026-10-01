@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { ALL_SERVICE_SCOPES, PRIVILEGED_SCOPES } from '../src/auth/config.js';
-import { buildContractInventory } from '../src/contract/inventory.js';
+import {
+  AGENT_USAGE_CONTRACT,
+  CONTRACT_MCP_TOOLS,
+  CONTRACT_MCP_TOOL_DESCRIPTIONS,
+  buildContractInventory,
+} from '../src/contract/inventory.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const snapshot = JSON.parse(
@@ -17,6 +22,26 @@ describe('contract inventory drift gate', () => {
   it('keeps auth scope exports aligned with inventory scopes', () => {
     const fromCode = [...ALL_SERVICE_SCOPES, ...PRIVILEGED_SCOPES].sort();
     expect([...snapshot.scopes].sort()).toEqual(fromCode);
+  });
+
+  it('keeps MCP tool list and description map keys aligned', () => {
+    expect(Object.keys(CONTRACT_MCP_TOOL_DESCRIPTIONS).sort()).toEqual(
+      [...CONTRACT_MCP_TOOLS].sort(),
+    );
+    expect(snapshot.mcpTools).toEqual([...CONTRACT_MCP_TOOLS]);
+    expect(snapshot.mcpToolDescriptions).toEqual(CONTRACT_MCP_TOOL_DESCRIPTIONS);
+  });
+
+  it('keeps AGENT_USAGE.md Contract-Version aligned with inventory', () => {
+    const doc = readFileSync(
+      new URL('../docs/AGENT_USAGE.md', import.meta.url),
+      'utf8',
+    );
+    const match = doc.match(/^Contract-Version:\s*(\S+)/m);
+    expect(match?.[1]).toBe(AGENT_USAGE_CONTRACT.version);
+    expect(snapshot.agentUsage).toEqual(AGENT_USAGE_CONTRACT);
+    expect(doc).toContain('mission_claims');
+    expect(doc).toContain('missions.claim');
   });
 });
 

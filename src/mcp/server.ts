@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { hasScopes, type Principal, type Scope } from '../auth/config.js';
+import { CONTRACT_MCP_TOOL_DESCRIPTIONS } from '../contract/inventory.js';
 import {
   ClaimAlreadyReleasedError,
   ClaimConflictError,
@@ -64,7 +65,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.list',
     {
-      description: 'List or search durable missions',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.list'],
       inputSchema: z.object({ query: z.string().optional() }),
     },
     async ({ query }) =>
@@ -76,7 +77,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.get',
     {
-      description: 'Get one durable mission by id',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.get'],
       inputSchema: z.object({ id: z.number().int().positive() }),
     },
     async ({ id }) =>
@@ -88,7 +89,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.create',
     {
-      description: 'Create a durable mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.create'],
       inputSchema: z.object({
         title: z.string().min(1),
         body: z.string().nullable().optional(),
@@ -107,7 +108,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.update',
     {
-      description: 'Update a durable mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.update'],
       inputSchema: z.object({
         id: z.number().int().positive(),
         title: z.string().min(1).optional(),
@@ -135,7 +136,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.checklist.list',
     {
-      description: 'List checklist items for a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.checklist.list'],
       inputSchema: z.object({ missionId: z.number().int().positive() }),
     },
     async ({ missionId }) =>
@@ -147,7 +148,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.checklist.add',
     {
-      description: 'Add a checklist item to a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.checklist.add'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         item: z.string().min(1),
@@ -171,7 +172,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.checklist.update',
     {
-      description: 'Update a checklist item owned by a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.checklist.update'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         itemId: z.number().int().positive(),
@@ -199,7 +200,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.checklist.remove',
     {
-      description: 'Remove a checklist item owned by a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.checklist.remove'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         itemId: z.number().int().positive(),
@@ -223,7 +224,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.sources.list',
     {
-      description: 'List sources for a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.sources.list'],
       inputSchema: z.object({ missionId: z.number().int().positive() }),
     },
     async ({ missionId }) =>
@@ -235,7 +236,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.sources.add',
     {
-      description: 'Add a source to a mission (unique path per mission)',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.sources.add'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         label: z.string().min(1),
@@ -266,7 +267,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.sources.remove',
     {
-      description: 'Remove a source owned by a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.sources.remove'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         sourceId: z.number().int().positive(),
@@ -290,7 +291,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.events.list',
     {
-      description: 'List durable mission audit events',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.events.list'],
       inputSchema: z.object({ missionId: z.number().int().positive() }),
     },
     async ({ missionId }) =>
@@ -302,7 +303,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.claim.get',
     {
-      description: 'Get the active (non-expired) claim for a mission, if any',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.claim.get'],
       inputSchema: z.object({ missionId: z.number().int().positive() }),
     },
     async ({ missionId }) =>
@@ -314,8 +315,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.claim',
     {
-      description:
-        'Atomically claim a mission with a lease and create the linked execution run',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.claim'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         runtime: z.string().min(1),
@@ -357,7 +357,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.claim.renew',
     {
-      description: 'Renew/heartbeat an owned active claim lease',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.claim.renew'],
       inputSchema: z.object({
         claimId: z.number().int().positive(),
         leaseSeconds: z
@@ -401,7 +401,7 @@ export function buildMcpServer(
   server.registerTool(
     'missions.claim.release',
     {
-      description: 'Release an owned claim with an explicit reason',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.claim.release'],
       inputSchema: z.object({
         claimId: z.number().int().positive(),
         reason: z.enum(['completed', 'failed', 'abandoned']),
@@ -452,7 +452,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.list',
     {
-      description: 'List execution runs for a mission',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.list'],
       inputSchema: z.object({ missionId: z.number().int().positive() }),
     },
     async ({ missionId }) =>
@@ -464,7 +464,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.create',
     {
-      description: 'Create a durable execution run linked to a mission and agent session',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.create'],
       inputSchema: z.object({
         missionId: z.number().int().positive(),
         runtime: z.string().min(1),
@@ -485,7 +485,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.updateStatus',
     {
-      description: 'Update run status and persist the transition event atomically',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.updateStatus'],
       inputSchema: z.object({
         runId: z.number().int().positive(),
         status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
@@ -522,7 +522,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.listEvents',
     {
-      description: 'List execution events for a run',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.listEvents'],
       inputSchema: z.object({ runId: z.number().int().positive() }),
     },
     async ({ runId }) =>
@@ -534,7 +534,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.recordSummary',
     {
-      description: 'Append a typed summary to a run',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.recordSummary'],
       inputSchema: z.object({
         runId: z.number().int().positive(),
         type: z.enum(['agent_self_report', 'reviewer_validated', 'operator_note']),
@@ -564,7 +564,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.listSummaries',
     {
-      description: 'List summaries for a run',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.listSummaries'],
       inputSchema: z.object({ runId: z.number().int().positive() }),
     },
     async ({ runId }) =>
@@ -576,7 +576,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.recordEvidence',
     {
-      description: 'Append an evidence reference to a run',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.recordEvidence'],
       inputSchema: z.object({
         runId: z.number().int().positive(),
         kind: z.string().min(1),
@@ -615,7 +615,7 @@ export function buildMcpServer(
   server.registerTool(
     'runs.listEvidence',
     {
-      description: 'List evidence references for a run',
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.listEvidence'],
       inputSchema: z.object({ runId: z.number().int().positive() }),
     },
     async ({ runId }) =>
