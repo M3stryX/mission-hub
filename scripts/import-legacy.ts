@@ -3,12 +3,20 @@ import { Pool, PoolClient } from 'pg';
 
 type JsonObject = Record<string, unknown>;
 
+type MissionStatus =
+  | 'backlog'
+  | 'todo'
+  | 'in_progress'
+  | 'review'
+  | 'done'
+  | 'blocked';
+
 interface LegacyMission {
   id: number;
   title: string;
   body?: string | null;
-  status: 'backlog' | 'todo' | 'in_progress' | 'review' | 'done' | 'blocked';
-  priority: number;
+  status: MissionStatus | 'cancelled' | string;
+  priority: number | string;
   due_at?: string | null;
   source?: string | null;
   tags?: string | null;
@@ -16,6 +24,49 @@ interface LegacyMission {
   parent_id?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+const MISSION_STATUSES = new Set<MissionStatus>([
+  'backlog',
+  'todo',
+  'in_progress',
+  'review',
+  'done',
+  'blocked',
+]);
+
+function normalizeMissionStatus(status: string): MissionStatus {
+  if (MISSION_STATUSES.has(status as MissionStatus)) {
+    return status as MissionStatus;
+  }
+  // Legacy Piblox used `cancelled` for closed work; V1 has no such enum.
+  if (status === 'cancelled') {
+    return 'done';
+  }
+  throw new Error(`Unsupported legacy mission status: ${status}`);
+}
+
+function normalizePriority(priority: number | string): number {
+  if (typeof priority === 'number' && Number.isInteger(priority)) {
+    if (priority < 1 || priority > 5) {
+      throw new Error(`Legacy priority out of range: ${priority}`);
+    }
+    return priority;
+  }
+
+  const mapped: Record<string, number> = {
+    highest: 1,
+    high: 2,
+    medium: 3,
+    normal: 3,
+    low: 4,
+    lowest: 5,
+  };
+  const key = String(priority).toLowerCase();
+  if (key in mapped) {
+    return mapped[key];
+  }
+  throw new Error(`Unsupported legacy priority: ${priority}`);
 }
 
 interface LegacyChecklistItem {
@@ -38,7 +89,7 @@ interface LegacySource {
 
 interface LegacyEvent {
   id: number;
-  mission_id: number;
+  mission_id: number | null;
   actor: string;
   kind: string;
   payload?: JsonObject | null;
@@ -98,8 +149,8 @@ async function run() {
           mission.id,
           mission.title,
           mission.body ?? null,
-          mission.status,
-          mission.priority,
+          normalizeMissionStatus(mission.status),
+          normalizePriority(mission.priority),
           mission.due_at ?? null,
           mission.source ?? null,
           mission.tags ?? null,
@@ -137,7 +188,13 @@ async function run() {
       );
     }
 
+    let skippedEvents = 0;
     for (const event of bundle.mission_events) {
+      if (event.mission_id == null) {
+        // Legacy search/audit rows without a mission target are not part of V1 SSOT.
+        skippedEvents += 1;
+        continue;
+      }
       await client.query(
         `INSERT INTO mission_events(
           id, mission_id, actor, kind, payload, created_at
@@ -169,7 +226,8 @@ async function run() {
         missions: bundle.missions.length,
         checklistItems: bundle.mission_checklist_items.length,
         sources: bundle.mission_sources.length,
-        events: bundle.mission_events.length,
+        events: bundle.mission_events.length - skippedEvents,
+        eventsSkippedNullMissionId: skippedEvents,
         cursorSessionsSkipped: bundle.cursor_sessions?.length ?? 0,
       }) + '\n',
     );
