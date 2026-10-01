@@ -120,6 +120,91 @@ export class VerifyFixtureRejectedError extends Error {
   }
 }
 
+export class ClaimConflictError extends Error {
+  readonly missionId: number;
+  readonly claimId: number;
+
+  constructor(missionId: number, claimId: number) {
+    super('claim_conflict');
+    this.name = 'ClaimConflictError';
+    this.missionId = missionId;
+    this.claimId = claimId;
+  }
+}
+
+export class ClaimNotOwnedError extends Error {
+  readonly claimId: number;
+
+  constructor(claimId: number) {
+    super('claim_not_owned');
+    this.name = 'ClaimNotOwnedError';
+    this.claimId = claimId;
+  }
+}
+
+export class ClaimExpiredError extends Error {
+  readonly claimId: number;
+
+  constructor(claimId: number) {
+    super('claim_expired');
+    this.name = 'ClaimExpiredError';
+    this.claimId = claimId;
+  }
+}
+
+export class ClaimAlreadyReleasedError extends Error {
+  readonly claimId: number;
+
+  constructor(claimId: number) {
+    super('claim_already_released');
+    this.name = 'ClaimAlreadyReleasedError';
+    this.claimId = claimId;
+  }
+}
+
+export const DEFAULT_CLAIM_LEASE_SECONDS = 300;
+export const MAX_CLAIM_LEASE_SECONDS = 3600;
+export const CLAIM_RELEASE_REASONS = [
+  'completed',
+  'failed',
+  'abandoned',
+  'expired',
+] as const;
+export type ClaimReleaseReason = (typeof CLAIM_RELEASE_REASONS)[number];
+
+export interface ClaimRow extends QueryResultRow {
+  id: number;
+  mission_id: number;
+  run_id: number;
+  client_id: string;
+  runtime: string;
+  agent: string;
+  lease_seconds: number;
+  claimed_at: Date;
+  expires_at: Date;
+  renewed_at: Date | null;
+  released_at: Date | null;
+  release_reason: string | null;
+}
+
+export interface ClaimMissionInput {
+  missionId: number;
+  runtime: string;
+  agent: string;
+  externalSessionId: string;
+  externalRunId: string;
+  leaseSeconds?: number;
+  correlationId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export interface ClaimResult {
+  claim: ClaimRow;
+  run: RunRow;
+  expiredPreviousClaimId: number | null;
+}
+
 export const VERIFY_FIXTURE_TAG = 'mh-runtime-verify';
 export const VERIFY_FIXTURE_TITLE_PREFIX = '[VERIFY]';
 
@@ -750,6 +835,299 @@ export class MissionHubStore {
       [missionId],
     );
     return result.rows;
+  }
+
+  async getActiveClaim(missionId: number): Promise<ClaimRow | null> {
+    const result = await this.pool.query<ClaimRow>(
+      `SELECT * FROM mission_claims
+       WHERE mission_id = $1
+         AND released_at IS NULL
+         AND expires_at > now()
+       ORDER BY id DESC
+       LIMIT 1`,
+      [missionId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async getClaim(claimId: number): Promise<ClaimRow | null> {
+    const result = await this.pool.query<ClaimRow>(
+      'SELECT * FROM mission_claims WHERE id = $1',
+      [claimId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * Atomically acquire a claim + execution run for a mission.
+   * Expired open claims are released as `expired` then replaced.
+   */
+  async claimMission(
+    input: ClaimMissionInput,
+    clientId: string,
+  ): Promise<ClaimResult | null> {
+    const leaseSeconds = Math.min(
+      Math.max(input.leaseSeconds ?? DEFAULT_CLAIM_LEASE_SECONDS, 1),
+      MAX_CLAIM_LEASE_SECONDS,
+    );
+
+    return this.transaction(async (client) => {
+      const mission = await client.query<MissionRow>(
+        'SELECT * FROM missions WHERE id = $1 FOR UPDATE',
+        [input.missionId],
+      );
+      if (!mission.rows[0]) {
+        return null;
+      }
+
+      const open = await client.query<ClaimRow>(
+        `SELECT * FROM mission_claims
+         WHERE mission_id = $1 AND released_at IS NULL
+         FOR UPDATE`,
+        [input.missionId],
+      );
+      let expiredPreviousClaimId: number | null = null;
+      const existing = open.rows[0];
+      if (existing) {
+        if (existing.expires_at.getTime() > Date.now()) {
+          throw new ClaimConflictError(input.missionId, existing.id);
+        }
+        await client.query(
+          `UPDATE mission_claims
+           SET released_at = now(), release_reason = 'expired'
+           WHERE id = $1`,
+          [existing.id],
+        );
+        await client.query(
+          `INSERT INTO mission_events(mission_id, actor, kind, payload)
+           VALUES ($1, $2, 'claim.expired', $3::jsonb)`,
+          [
+            input.missionId,
+            clientId,
+            JSON.stringify({
+              claimId: existing.id,
+              previousClientId: existing.client_id,
+              runId: existing.run_id,
+            }),
+          ],
+        );
+        expiredPreviousClaimId = existing.id;
+      }
+
+      const session = await client.query<{ id: number }>(
+        `INSERT INTO agent_sessions(
+          client_id, runtime, agent, external_session_id, correlation_id
+        ) VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (client_id, runtime, external_session_id)
+        DO UPDATE SET last_seen_at = now(), agent = EXCLUDED.agent,
+                      correlation_id = COALESCE(EXCLUDED.correlation_id, agent_sessions.correlation_id)
+        RETURNING id`,
+        [
+          clientId,
+          input.runtime,
+          input.agent,
+          input.externalSessionId,
+          input.correlationId ?? null,
+        ],
+      );
+
+      const runResult = await client.query<RunRow>(
+        `INSERT INTO execution_runs(
+          mission_id, session_id, client_id, runtime, agent, external_run_id,
+          correlation_id, provider, model, status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'RUNNING'::run_status)
+        RETURNING *`,
+        [
+          input.missionId,
+          session.rows[0].id,
+          clientId,
+          input.runtime,
+          input.agent,
+          input.externalRunId,
+          input.correlationId ?? null,
+          input.provider ?? null,
+          input.model ?? null,
+        ],
+      );
+      const run = runResult.rows[0];
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, status_to, payload_json)
+         VALUES ($1,$2,$2,'run.created',$3,$4::jsonb)`,
+        [
+          run.id,
+          clientId,
+          run.status,
+          JSON.stringify({ via: 'claim', correlationId: run.correlation_id }),
+        ],
+      );
+
+      const claimResult = await client.query<ClaimRow>(
+        `INSERT INTO mission_claims(
+          mission_id, run_id, client_id, runtime, agent, lease_seconds, expires_at
+        ) VALUES ($1,$2,$3,$4,$5,$6, now() + make_interval(secs => $6::integer))
+        RETURNING *`,
+        [
+          input.missionId,
+          run.id,
+          clientId,
+          input.runtime,
+          input.agent,
+          leaseSeconds,
+        ],
+      );
+      const claim = claimResult.rows[0];
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'claim.acquired', $3::jsonb)`,
+        [
+          input.missionId,
+          clientId,
+          JSON.stringify({
+            claimId: claim.id,
+            runId: run.id,
+            runtime: claim.runtime,
+            agent: claim.agent,
+            leaseSeconds: claim.lease_seconds,
+            expiresAt: claim.expires_at.toISOString(),
+            expiredPreviousClaimId,
+          }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, payload_json)
+         VALUES ($1,$2,$2,'claim.acquired',$3::jsonb)`,
+        [
+          run.id,
+          clientId,
+          JSON.stringify({ claimId: claim.id, leaseSeconds }),
+        ],
+      );
+
+      return { claim, run, expiredPreviousClaimId };
+    });
+  }
+
+  async renewClaim(
+    claimId: number,
+    clientId: string,
+    leaseSeconds?: number,
+  ): Promise<ClaimRow | null> {
+    const nextLease = Math.min(
+      Math.max(leaseSeconds ?? DEFAULT_CLAIM_LEASE_SECONDS, 1),
+      MAX_CLAIM_LEASE_SECONDS,
+    );
+
+    return this.transaction(async (client) => {
+      const current = await client.query<ClaimRow>(
+        'SELECT * FROM mission_claims WHERE id = $1 FOR UPDATE',
+        [claimId],
+      );
+      const claim = current.rows[0];
+      if (!claim) {
+        return null;
+      }
+      if (claim.released_at) {
+        throw new ClaimAlreadyReleasedError(claimId);
+      }
+      if (claim.client_id !== clientId) {
+        throw new ClaimNotOwnedError(claimId);
+      }
+      if (claim.expires_at.getTime() <= Date.now()) {
+        throw new ClaimExpiredError(claimId);
+      }
+
+      const updated = await client.query<ClaimRow>(
+        `UPDATE mission_claims
+         SET lease_seconds = $2,
+             renewed_at = now(),
+             expires_at = now() + make_interval(secs => $2::integer)
+         WHERE id = $1
+         RETURNING *`,
+        [claimId, nextLease],
+      );
+      const next = updated.rows[0];
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'claim.renewed', $3::jsonb)`,
+        [
+          next.mission_id,
+          clientId,
+          JSON.stringify({
+            claimId: next.id,
+            leaseSeconds: next.lease_seconds,
+            expiresAt: next.expires_at.toISOString(),
+          }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, payload_json)
+         VALUES ($1,$2,$2,'claim.renewed',$3::jsonb)`,
+        [
+          next.run_id,
+          clientId,
+          JSON.stringify({
+            claimId: next.id,
+            leaseSeconds: next.lease_seconds,
+          }),
+        ],
+      );
+      return next;
+    });
+  }
+
+  async releaseClaim(
+    claimId: number,
+    clientId: string,
+    reason: ClaimReleaseReason,
+  ): Promise<ClaimRow | null> {
+    if (reason === 'expired') {
+      throw new Error('invalid_release_reason');
+    }
+
+    return this.transaction(async (client) => {
+      const current = await client.query<ClaimRow>(
+        'SELECT * FROM mission_claims WHERE id = $1 FOR UPDATE',
+        [claimId],
+      );
+      const claim = current.rows[0];
+      if (!claim) {
+        return null;
+      }
+      if (claim.released_at) {
+        throw new ClaimAlreadyReleasedError(claimId);
+      }
+      if (claim.client_id !== clientId) {
+        throw new ClaimNotOwnedError(claimId);
+      }
+
+      const updated = await client.query<ClaimRow>(
+        `UPDATE mission_claims
+         SET released_at = now(), release_reason = $2::claim_release_reason
+         WHERE id = $1
+         RETURNING *`,
+        [claimId, reason],
+      );
+      const next = updated.rows[0];
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'claim.released', $3::jsonb)`,
+        [
+          next.mission_id,
+          clientId,
+          JSON.stringify({
+            claimId: next.id,
+            runId: next.run_id,
+            reason,
+          }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, payload_json)
+         VALUES ($1,$2,$2,'claim.released',$3::jsonb)`,
+        [next.run_id, clientId, JSON.stringify({ claimId: next.id, reason })],
+      );
+      return next;
+    });
   }
 
   /**

@@ -39,7 +39,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   };
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE evidence, summaries, execution_events, mission_claims, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
   });
 
   afterAll(async () => {
@@ -484,5 +484,141 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
         )
       ).status,
     ).toBe(403);
+  });
+
+  it('claims a mission atomically, renews lease, conflicts, expires, and releases', async () => {
+    const other = createApp(new MissionHubStore(pool), {
+      envCredentials: [
+        ...credentials,
+        {
+          clientId: 'other-agent',
+          token: 'other-token',
+          scopes: new Set(allScopes),
+        },
+      ],
+      adminToken,
+    });
+    const otherAuth = {
+      ...host,
+      Authorization: 'Bearer other-token',
+      'Content-Type': 'application/json',
+    };
+
+    const created = await app.request('http://localhost/api/v1/missions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ title: 'Claim target' }),
+    });
+    expect(created.status).toBe(201);
+    const mission = (await created.json()) as { mission: { id: number } };
+
+    const claimed = await app.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/claim`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          runtime: 'cursor',
+          agent: 'claim-test',
+          externalSessionId: 'claim-session-1',
+          externalRunId: 'claim-run-1',
+          leaseSeconds: 60,
+        }),
+      },
+    );
+    expect(claimed.status).toBe(201);
+    const first = (await claimed.json()) as {
+      claim: { id: number; client_id: string; run_id: number };
+      run: { id: number; status: string };
+      expiredPreviousClaimId: number | null;
+    };
+    expect(first.claim.client_id).toBe('contract-test');
+    expect(first.run.status).toBe('RUNNING');
+    expect(first.expiredPreviousClaimId).toBeNull();
+
+    const conflict = await other.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/claim`,
+      {
+        method: 'POST',
+        headers: otherAuth,
+        body: JSON.stringify({
+          runtime: 'cursor',
+          agent: 'other',
+          externalSessionId: 'claim-session-2',
+          externalRunId: 'claim-run-2',
+        }),
+      },
+    );
+    expect(conflict.status).toBe(409);
+
+    const renewed = await app.request(
+      `http://localhost/api/v1/claims/${first.claim.id}/renew`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ leaseSeconds: 90 }),
+      },
+    );
+    expect(renewed.status).toBe(200);
+
+    await pool.query(
+      `UPDATE mission_claims
+       SET claimed_at = now() - interval '2 seconds',
+           expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [first.claim.id],
+    );
+
+    const reclaim = await other.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/claim`,
+      {
+        method: 'POST',
+        headers: otherAuth,
+        body: JSON.stringify({
+          runtime: 'cursor',
+          agent: 'other',
+          externalSessionId: 'claim-session-3',
+          externalRunId: 'claim-run-3',
+          leaseSeconds: 30,
+        }),
+      },
+    );
+    expect(reclaim.status).toBe(201);
+    const second = (await reclaim.json()) as {
+      claim: { id: number; client_id: string };
+      expiredPreviousClaimId: number | null;
+    };
+    expect(second.claim.client_id).toBe('other-agent');
+    expect(second.expiredPreviousClaimId).toBe(first.claim.id);
+
+    const released = await other.request(
+      `http://localhost/api/v1/claims/${second.claim.id}/release`,
+      {
+        method: 'POST',
+        headers: otherAuth,
+        body: JSON.stringify({ reason: 'completed' }),
+      },
+    );
+    expect(released.status).toBe(200);
+
+    const events = await app.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/events`,
+      { headers: auth },
+    );
+    const eventBody = (await events.json()) as {
+      events: Array<{ kind: string }>;
+    };
+    const kinds = eventBody.events.map((e) => e.kind);
+    expect(kinds).toContain('claim.acquired');
+    expect(kinds).toContain('claim.renewed');
+    expect(kinds).toContain('claim.expired');
+    expect(kinds).toContain('claim.released');
+
+    const active = await app.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/claim`,
+      { headers: auth },
+    );
+    expect(active.status).toBe(200);
+    expect(((await active.json()) as { claim: unknown }).claim).toBeNull();
   });
 });

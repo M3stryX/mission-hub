@@ -21,6 +21,7 @@ export const CONTRACT_ENUMS = {
   ],
   source_kind: ['doc', 'link'],
   session_status: ['OPEN', 'CLOSED', 'ABORTED'],
+  claim_release_reason: ['completed', 'failed', 'abandoned', 'expired'],
 } as const;
 
 export const CONTRACT_SCOPES = [
@@ -47,6 +48,7 @@ export const CONTRACT_TABLES = [
   'summaries',
   'evidence',
   'api_clients',
+  'mission_claims',
   'schema_migrations',
 ] as const;
 
@@ -69,6 +71,10 @@ export const CONTRACT_REST_ROUTES = [
   'POST /api/v1/missions/:id/sources',
   'DELETE /api/v1/missions/:id/sources/:sourceId',
   'GET /api/v1/missions/:id/events',
+  'GET /api/v1/missions/:id/claim',
+  'POST /api/v1/missions/:id/claim',
+  'POST /api/v1/claims/:claimId/renew',
+  'POST /api/v1/claims/:claimId/release',
   'GET /api/v1/missions/:id/runs',
   'POST /api/v1/runs',
   'PATCH /api/v1/runs/:id/status',
@@ -93,6 +99,10 @@ export const CONTRACT_MCP_TOOLS = [
   'missions.sources.add',
   'missions.sources.remove',
   'missions.events.list',
+  'missions.claim.get',
+  'missions.claim',
+  'missions.claim.renew',
+  'missions.claim.release',
   'runs.list',
   'runs.create',
   'runs.updateStatus',

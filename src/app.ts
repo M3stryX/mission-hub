@@ -14,7 +14,12 @@ import {
   type AuthResolverOptions,
 } from './auth/resolve.js';
 import {
+  ClaimAlreadyReleasedError,
+  ClaimConflictError,
+  ClaimExpiredError,
+  ClaimNotOwnedError,
   DuplicateSourcePathError,
+  MAX_CLAIM_LEASE_SECONDS,
   VERIFY_FIXTURE_TAG,
   VerifyFixtureRejectedError,
   type MissionHubStore,
@@ -54,6 +59,35 @@ const createRunSchema = z.object({
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+const claimMissionSchema = z.object({
+  runtime: z.string().min(1),
+  agent: z.string().min(1),
+  externalSessionId: z.string().min(1),
+  externalRunId: z.string().min(1),
+  leaseSeconds: z
+    .number()
+    .int()
+    .positive()
+    .max(MAX_CLAIM_LEASE_SECONDS)
+    .optional(),
+  correlationId: z.string().nullable().optional(),
+  provider: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+});
+
+const renewClaimSchema = z.object({
+  leaseSeconds: z
+    .number()
+    .int()
+    .positive()
+    .max(MAX_CLAIM_LEASE_SECONDS)
+    .optional(),
+});
+
+const releaseClaimSchema = z.object({
+  reason: z.enum(['completed', 'failed', 'abandoned']),
 });
 
 const updateRunStatusSchema = z.object({
@@ -441,6 +475,114 @@ export function createApp(
       return c.json({ error: 'not_found' }, 404);
     }
     return c.json({ events: await store.listMissionEvents(missionId) });
+  });
+
+  app.get('/api/v1/missions/:id/claim', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'missions:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    if (!(await store.getMission(missionId))) {
+      return c.json({ error: 'not_found' }, 404);
+    }
+    return c.json({ claim: await store.getActiveClaim(missionId) });
+  });
+
+  app.post('/api/v1/missions/:id/claim', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:write',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = claimMissionSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    try {
+      const result = await store.claimMission(
+        { missionId, ...parsed.data },
+        principal.clientId,
+      );
+      return result
+        ? c.json(result, 201)
+        : c.json({ error: 'not_found' }, 404);
+    } catch (error) {
+      if (error instanceof ClaimConflictError) {
+        return c.json(
+          {
+            error: 'claim_conflict',
+            missionId: error.missionId,
+            claimId: error.claimId,
+          },
+          409,
+        );
+      }
+      throw error;
+    }
+  });
+
+  app.post('/api/v1/claims/:claimId/renew', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:write',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const claimId = parseId(c.req.param('claimId'));
+    if (!claimId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = renewClaimSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    try {
+      const claim = await store.renewClaim(
+        claimId,
+        principal.clientId,
+        parsed.data.leaseSeconds,
+      );
+      return claim ? c.json({ claim }) : c.json({ error: 'not_found' }, 404);
+    } catch (error) {
+      if (error instanceof ClaimNotOwnedError) {
+        return c.json({ error: 'claim_not_owned', claimId: error.claimId }, 403);
+      }
+      if (error instanceof ClaimExpiredError) {
+        return c.json({ error: 'claim_expired', claimId: error.claimId }, 409);
+      }
+      if (error instanceof ClaimAlreadyReleasedError) {
+        return c.json(
+          { error: 'claim_already_released', claimId: error.claimId },
+          409,
+        );
+      }
+      throw error;
+    }
+  });
+
+  app.post('/api/v1/claims/:claimId/release', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:write',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const claimId = parseId(c.req.param('claimId'));
+    if (!claimId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = releaseClaimSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    try {
+      const claim = await store.releaseClaim(
+        claimId,
+        principal.clientId,
+        parsed.data.reason,
+      );
+      return claim ? c.json({ claim }) : c.json({ error: 'not_found' }, 404);
+    } catch (error) {
+      if (error instanceof ClaimNotOwnedError) {
+        return c.json({ error: 'claim_not_owned', claimId: error.claimId }, 403);
+      }
+      if (error instanceof ClaimAlreadyReleasedError) {
+        return c.json(
+          { error: 'claim_already_released', claimId: error.claimId },
+          409,
+        );
+      }
+      throw error;
+    }
   });
 
   app.get('/api/v1/missions/:id/runs', async (c) => {
