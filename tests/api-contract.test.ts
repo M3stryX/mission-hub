@@ -398,6 +398,19 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     expect(fixture.status).toBe(201);
     const created = (await fixture.json()) as { mission: { id: number } };
 
+    const withRun = await verifyApp.request('http://localhost/api/v1/runs', {
+      method: 'POST',
+      headers: verifyAuth,
+      body: JSON.stringify({
+        missionId: created.mission.id,
+        runtime: 'n8n',
+        agent: 'runtime-verify',
+        externalSessionId: 'verify-session-contract',
+        externalRunId: 'verify-run-contract',
+      }),
+    });
+    expect(withRun.status).toBe(201);
+
     expect(
       (
         await verifyApp.request(

@@ -769,6 +769,28 @@ export class MissionHubStore {
       if (!isVerifyFixtureMission(mission)) {
         throw new VerifyFixtureRejectedError(missionId);
       }
+
+      // execution_runs.mission_id has no ON DELETE CASCADE (by design for
+      // normal missions). Verify fixtures must remove runs first so
+      // events/summaries/evidence cascade, then drop orphan sessions.
+      const sessionIds = await client.query<{ session_id: number }>(
+        'SELECT DISTINCT session_id FROM execution_runs WHERE mission_id = $1',
+        [missionId],
+      );
+      await client.query('DELETE FROM execution_runs WHERE mission_id = $1', [
+        missionId,
+      ]);
+      for (const row of sessionIds.rows) {
+        await client.query(
+          `DELETE FROM agent_sessions AS s
+           WHERE s.id = $1
+             AND NOT EXISTS (
+               SELECT 1 FROM execution_runs AS r WHERE r.session_id = s.id
+             )`,
+          [row.session_id],
+        );
+      }
+
       await client.query('DELETE FROM missions WHERE id = $1', [missionId]);
       return mission;
     });
