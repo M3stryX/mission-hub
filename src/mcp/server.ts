@@ -1,7 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { hasScopes, type Principal, type Scope } from '../auth/config.js';
-import type { MissionHubStore } from '../db/store.js';
+import {
+  DuplicateSourcePathError,
+  type MissionHubStore,
+} from '../db/store.js';
 
 function toolResult(value: unknown) {
   return {
@@ -16,6 +19,18 @@ function forbidden(required: readonly Scope[]) {
       {
         type: 'text' as const,
         text: JSON.stringify({ error: 'forbidden', required }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+function toolError(error: string, extra: Record<string, unknown> = {}) {
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({ error, ...extra }),
       },
     ],
     isError: true,
@@ -72,12 +87,208 @@ export function buildMcpServer(
         status: z.string().optional(),
         priority: z.number().int().min(1).max(5).optional(),
         parentId: z.number().int().positive().nullable().optional(),
+        tags: z.string().nullable().optional(),
       }),
     },
     async (input) =>
       requireScopes(principal, ['missions:write'])
         ? toolResult(await store.createMission(input, principal.clientId))
         : forbidden(['missions:write']),
+  );
+
+  server.registerTool(
+    'missions.update',
+    {
+      description: 'Update a durable mission',
+      inputSchema: z.object({
+        id: z.number().int().positive(),
+        title: z.string().min(1).optional(),
+        body: z.string().nullable().optional(),
+        status: z.string().optional(),
+        priority: z.number().int().min(1).max(5).optional(),
+        parentId: z.number().int().positive().nullable().optional(),
+        tags: z.string().nullable().optional(),
+        dueAt: z.string().nullable().optional(),
+        source: z.string().nullable().optional(),
+        recurrence: z.string().nullable().optional(),
+      }),
+    },
+    async ({ id, ...input }) => {
+      if (!requireScopes(principal, ['missions:write'])) {
+        return forbidden(['missions:write']);
+      }
+      const mission = await store.updateMission(id, input, principal.clientId);
+      return mission
+        ? toolResult(mission)
+        : toolError('not_found', { id });
+    },
+  );
+
+  server.registerTool(
+    'missions.checklist.list',
+    {
+      description: 'List checklist items for a mission',
+      inputSchema: z.object({ missionId: z.number().int().positive() }),
+    },
+    async ({ missionId }) =>
+      requireScopes(principal, ['missions:read'])
+        ? toolResult(await store.listChecklistItems(missionId))
+        : forbidden(['missions:read']),
+  );
+
+  server.registerTool(
+    'missions.checklist.add',
+    {
+      description: 'Add a checklist item to a mission',
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        item: z.string().min(1),
+        position: z.number().int().min(0).optional(),
+      }),
+    },
+    async ({ missionId, item, position }) => {
+      if (!requireScopes(principal, ['missions:write'])) {
+        return forbidden(['missions:write']);
+      }
+      const row = await store.addChecklistItem(
+        missionId,
+        item,
+        position,
+        principal.clientId,
+      );
+      return row ? toolResult(row) : toolError('not_found', { missionId });
+    },
+  );
+
+  server.registerTool(
+    'missions.checklist.update',
+    {
+      description: 'Update a checklist item owned by a mission',
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        itemId: z.number().int().positive(),
+        item: z.string().min(1).optional(),
+        done: z.boolean().optional(),
+        position: z.number().int().min(0).optional(),
+      }),
+    },
+    async ({ missionId, itemId, item, done, position }) => {
+      if (!requireScopes(principal, ['missions:write'])) {
+        return forbidden(['missions:write']);
+      }
+      const row = await store.updateChecklistItem(
+        missionId,
+        itemId,
+        { item, done, position },
+        principal.clientId,
+      );
+      return row
+        ? toolResult(row)
+        : toolError('not_found', { missionId, itemId });
+    },
+  );
+
+  server.registerTool(
+    'missions.checklist.remove',
+    {
+      description: 'Remove a checklist item owned by a mission',
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        itemId: z.number().int().positive(),
+      }),
+    },
+    async ({ missionId, itemId }) => {
+      if (!requireScopes(principal, ['missions:write'])) {
+        return forbidden(['missions:write']);
+      }
+      const row = await store.removeChecklistItem(
+        missionId,
+        itemId,
+        principal.clientId,
+      );
+      return row
+        ? toolResult(row)
+        : toolError('not_found', { missionId, itemId });
+    },
+  );
+
+  server.registerTool(
+    'missions.sources.list',
+    {
+      description: 'List sources for a mission',
+      inputSchema: z.object({ missionId: z.number().int().positive() }),
+    },
+    async ({ missionId }) =>
+      requireScopes(principal, ['missions:read'])
+        ? toolResult(await store.listSources(missionId))
+        : forbidden(['missions:read']),
+  );
+
+  server.registerTool(
+    'missions.sources.add',
+    {
+      description: 'Add a source to a mission (unique path per mission)',
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        label: z.string().min(1),
+        path: z.string().min(1),
+        kind: z.enum(['doc', 'link']),
+      }),
+    },
+    async ({ missionId, label, path, kind }) => {
+      if (!requireScopes(principal, ['missions:write'])) {
+        return forbidden(['missions:write']);
+      }
+      try {
+        const row = await store.addSource(
+          missionId,
+          { label, path, kind },
+          principal.clientId,
+        );
+        return row ? toolResult(row) : toolError('not_found', { missionId });
+      } catch (error) {
+        if (error instanceof DuplicateSourcePathError) {
+          return toolError('duplicate_source_path', { missionId, path });
+        }
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    'missions.sources.remove',
+    {
+      description: 'Remove a source owned by a mission',
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        sourceId: z.number().int().positive(),
+      }),
+    },
+    async ({ missionId, sourceId }) => {
+      if (!requireScopes(principal, ['missions:write'])) {
+        return forbidden(['missions:write']);
+      }
+      const row = await store.removeSource(
+        missionId,
+        sourceId,
+        principal.clientId,
+      );
+      return row
+        ? toolResult(row)
+        : toolError('not_found', { missionId, sourceId });
+    },
+  );
+
+  server.registerTool(
+    'missions.events.list',
+    {
+      description: 'List durable mission audit events',
+      inputSchema: z.object({ missionId: z.number().int().positive() }),
+    },
+    async ({ missionId }) =>
+      requireScopes(principal, ['missions:read'])
+        ? toolResult(await store.listMissionEvents(missionId))
+        : forbidden(['missions:read']),
   );
 
   server.registerTool(
@@ -139,6 +350,18 @@ export function buildMcpServer(
   );
 
   server.registerTool(
+    'runs.listEvents',
+    {
+      description: 'List execution events for a run',
+      inputSchema: z.object({ runId: z.number().int().positive() }),
+    },
+    async ({ runId }) =>
+      requireScopes(principal, ['runs:read'])
+        ? toolResult(await store.listRunEvents(runId))
+        : forbidden(['runs:read']),
+  );
+
+  server.registerTool(
     'runs.recordSummary',
     {
       description: 'Append a typed summary to a run',
@@ -154,6 +377,18 @@ export function buildMcpServer(
             await store.addSummary(runId, type, content, principal.clientId),
           )
         : forbidden(['summaries:write']),
+  );
+
+  server.registerTool(
+    'runs.listSummaries',
+    {
+      description: 'List summaries for a run',
+      inputSchema: z.object({ runId: z.number().int().positive() }),
+    },
+    async ({ runId }) =>
+      requireScopes(principal, ['summaries:read'])
+        ? toolResult(await store.listSummaries(runId))
+        : forbidden(['summaries:read']),
   );
 
   server.registerTool(
@@ -177,9 +412,22 @@ export function buildMcpServer(
               label,
               uri,
               metadata ?? null,
+              principal.clientId,
             ),
           )
         : forbidden(['evidence:write']),
+  );
+
+  server.registerTool(
+    'runs.listEvidence',
+    {
+      description: 'List evidence references for a run',
+      inputSchema: z.object({ runId: z.number().int().positive() }),
+    },
+    async ({ runId }) =>
+      requireScopes(principal, ['evidence:read'])
+        ? toolResult(await store.listEvidence(runId))
+        : forbidden(['evidence:read']),
   );
 
   return server;

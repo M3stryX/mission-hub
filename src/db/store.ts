@@ -71,6 +71,71 @@ export interface EvidenceRow extends QueryResultRow {
   created_at: Date;
 }
 
+export interface ChecklistItemRow extends QueryResultRow {
+  id: number;
+  mission_id: number;
+  item: string;
+  done: boolean;
+  position: number;
+  created_at: Date;
+}
+
+export interface MissionSourceRow extends QueryResultRow {
+  id: number;
+  mission_id: number;
+  label: string;
+  path: string;
+  kind: string;
+  created_at: Date;
+}
+
+export interface MissionEventRow extends QueryResultRow {
+  id: number;
+  mission_id: number;
+  actor: string;
+  kind: string;
+  payload: Record<string, unknown> | null;
+  created_at: Date;
+}
+
+export class DuplicateSourcePathError extends Error {
+  readonly missionId: number;
+  readonly path: string;
+
+  constructor(missionId: number, path: string) {
+    super('duplicate_source_path');
+    this.name = 'DuplicateSourcePathError';
+    this.missionId = missionId;
+    this.path = path;
+  }
+}
+
+export class VerifyFixtureRejectedError extends Error {
+  readonly missionId: number;
+
+  constructor(missionId: number) {
+    super('verify_fixture_rejected');
+    this.name = 'VerifyFixtureRejectedError';
+    this.missionId = missionId;
+  }
+}
+
+export const VERIFY_FIXTURE_TAG = 'mh-runtime-verify';
+export const VERIFY_FIXTURE_TITLE_PREFIX = '[VERIFY]';
+
+export function isVerifyFixtureMission(mission: {
+  title: string;
+  tags: string | null;
+}): boolean {
+  const tags = (mission.tags ?? '')
+    .split(/[\s,]+/)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  const hasTag = tags.includes(VERIFY_FIXTURE_TAG);
+  const hasTitle = mission.title.startsWith(VERIFY_FIXTURE_TITLE_PREFIX);
+  return hasTag && hasTitle;
+}
+
 export interface ApiClientRow extends QueryResultRow {
   id: number;
   client_id: string;
@@ -392,13 +457,25 @@ export class MissionHubStore {
     content: string,
     principal: string,
   ): Promise<SummaryRow> {
-    const result = await this.pool.query<SummaryRow>(
-      `INSERT INTO summaries(run_id, type, content, actor, client_id)
-       VALUES ($1,$2::summary_type,$3,$4,$4)
-       RETURNING *`,
-      [runId, type, content, principal],
-    );
-    return result.rows[0];
+    return this.transaction(async (client) => {
+      const result = await client.query<SummaryRow>(
+        `INSERT INTO summaries(run_id, type, content, actor, client_id)
+         VALUES ($1,$2::summary_type,$3,$4,$4)
+         RETURNING *`,
+        [runId, type, content, principal],
+      );
+      const summary = result.rows[0];
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, payload_json)
+         VALUES ($1,$2,$2,'run.summary_recorded',$3::jsonb)`,
+        [
+          runId,
+          principal,
+          JSON.stringify({ summaryId: summary.id, type: summary.type }),
+        ],
+      );
+      return summary;
+    });
   }
 
   async listSummaries(runId: number): Promise<SummaryRow[]> {
@@ -415,14 +492,31 @@ export class MissionHubStore {
     label: string,
     uri: string,
     metadata: Record<string, unknown> | null,
+    actor: string,
   ): Promise<EvidenceRow> {
-    const result = await this.pool.query<EvidenceRow>(
-      `INSERT INTO evidence(run_id, kind, label, uri, metadata_json)
-       VALUES ($1,$2,$3,$4,$5::jsonb)
-       RETURNING *`,
-      [runId, kind, label, uri, JSON.stringify(metadata)],
-    );
-    return result.rows[0];
+    return this.transaction(async (client) => {
+      const result = await client.query<EvidenceRow>(
+        `INSERT INTO evidence(run_id, kind, label, uri, metadata_json)
+         VALUES ($1,$2,$3,$4,$5::jsonb)
+         RETURNING *`,
+        [runId, kind, label, uri, JSON.stringify(metadata)],
+      );
+      const evidence = result.rows[0];
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, payload_json)
+         VALUES ($1,$2,$2,'run.evidence_recorded',$3::jsonb)`,
+        [
+          runId,
+          actor,
+          JSON.stringify({
+            evidenceId: evidence.id,
+            kind: evidence.kind,
+            uri: evidence.uri,
+          }),
+        ],
+      );
+      return evidence;
+    });
   }
 
   async listEvidence(runId: number): Promise<EvidenceRow[]> {
@@ -431,6 +525,253 @@ export class MissionHubStore {
       [runId],
     );
     return result.rows;
+  }
+
+  async listChecklistItems(missionId: number): Promise<ChecklistItemRow[]> {
+    const result = await this.pool.query<ChecklistItemRow>(
+      `SELECT * FROM mission_checklist_items
+       WHERE mission_id = $1
+       ORDER BY position ASC, id ASC`,
+      [missionId],
+    );
+    return result.rows;
+  }
+
+  async addChecklistItem(
+    missionId: number,
+    item: string,
+    position: number | undefined,
+    actor: string,
+  ): Promise<ChecklistItemRow | null> {
+    return this.transaction(async (client) => {
+      const mission = await client.query(
+        'SELECT id FROM missions WHERE id = $1 FOR UPDATE',
+        [missionId],
+      );
+      if (!mission.rows[0]) {
+        return null;
+      }
+
+      let resolvedPosition = position;
+      if (resolvedPosition === undefined) {
+        const max = await client.query<{ max: number | null }>(
+          `SELECT MAX(position) AS max FROM mission_checklist_items WHERE mission_id = $1`,
+          [missionId],
+        );
+        resolvedPosition = (max.rows[0]?.max ?? -1) + 1;
+      }
+
+      const result = await client.query<ChecklistItemRow>(
+        `INSERT INTO mission_checklist_items(mission_id, item, done, position)
+         VALUES ($1, $2, false, $3)
+         RETURNING *`,
+        [missionId, item, resolvedPosition],
+      );
+      const row = result.rows[0];
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'checklist.add', $3::jsonb)`,
+        [
+          missionId,
+          actor,
+          JSON.stringify({ itemId: row.id, item: row.item, position: row.position }),
+        ],
+      );
+      return row;
+    });
+  }
+
+  async updateChecklistItem(
+    missionId: number,
+    itemId: number,
+    input: { item?: string; done?: boolean; position?: number },
+    actor: string,
+  ): Promise<ChecklistItemRow | null> {
+    return this.transaction(async (client) => {
+      const current = await client.query<ChecklistItemRow>(
+        `SELECT * FROM mission_checklist_items
+         WHERE id = $1 AND mission_id = $2
+         FOR UPDATE`,
+        [itemId, missionId],
+      );
+      const before = current.rows[0];
+      if (!before) {
+        return null;
+      }
+
+      const result = await client.query<ChecklistItemRow>(
+        `UPDATE mission_checklist_items
+         SET item = COALESCE($3, item),
+             done = COALESCE($4, done),
+             position = COALESCE($5, position)
+         WHERE id = $1 AND mission_id = $2
+         RETURNING *`,
+        [
+          itemId,
+          missionId,
+          input.item ?? null,
+          input.done ?? null,
+          input.position ?? null,
+        ],
+      );
+      const row = result.rows[0];
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'checklist.update', $3::jsonb)`,
+        [
+          missionId,
+          actor,
+          JSON.stringify({
+            itemId,
+            before: { item: before.item, done: before.done, position: before.position },
+            after: { item: row.item, done: row.done, position: row.position },
+          }),
+        ],
+      );
+      return row;
+    });
+  }
+
+  async removeChecklistItem(
+    missionId: number,
+    itemId: number,
+    actor: string,
+  ): Promise<ChecklistItemRow | null> {
+    return this.transaction(async (client) => {
+      const result = await client.query<ChecklistItemRow>(
+        `DELETE FROM mission_checklist_items
+         WHERE id = $1 AND mission_id = $2
+         RETURNING *`,
+        [itemId, missionId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return null;
+      }
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'checklist.remove', $3::jsonb)`,
+        [missionId, actor, JSON.stringify({ itemId, item: row.item })],
+      );
+      return row;
+    });
+  }
+
+  async listSources(missionId: number): Promise<MissionSourceRow[]> {
+    const result = await this.pool.query<MissionSourceRow>(
+      `SELECT * FROM mission_sources
+       WHERE mission_id = $1
+       ORDER BY id ASC`,
+      [missionId],
+    );
+    return result.rows;
+  }
+
+  async addSource(
+    missionId: number,
+    input: { label: string; path: string; kind: 'doc' | 'link' },
+    actor: string,
+  ): Promise<MissionSourceRow | null> {
+    return this.transaction(async (client) => {
+      const mission = await client.query(
+        'SELECT id FROM missions WHERE id = $1 FOR UPDATE',
+        [missionId],
+      );
+      if (!mission.rows[0]) {
+        return null;
+      }
+
+      try {
+        const result = await client.query<MissionSourceRow>(
+          `INSERT INTO mission_sources(mission_id, label, path, kind)
+           VALUES ($1, $2, $3, $4::source_kind)
+           RETURNING *`,
+          [missionId, input.label, input.path, input.kind],
+        );
+        const row = result.rows[0];
+        await client.query(
+          `INSERT INTO mission_events(mission_id, actor, kind, payload)
+           VALUES ($1, $2, 'source.add', $3::jsonb)`,
+          [
+            missionId,
+            actor,
+            JSON.stringify({
+              sourceId: row.id,
+              path: row.path,
+              kind: row.kind,
+            }),
+          ],
+        );
+        return row;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('mission_sources_mission_path_unique')) {
+          throw new DuplicateSourcePathError(missionId, input.path);
+        }
+        throw error;
+      }
+    });
+  }
+
+  async removeSource(
+    missionId: number,
+    sourceId: number,
+    actor: string,
+  ): Promise<MissionSourceRow | null> {
+    return this.transaction(async (client) => {
+      const result = await client.query<MissionSourceRow>(
+        `DELETE FROM mission_sources
+         WHERE id = $1 AND mission_id = $2
+         RETURNING *`,
+        [sourceId, missionId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return null;
+      }
+      await client.query(
+        `INSERT INTO mission_events(mission_id, actor, kind, payload)
+         VALUES ($1, $2, 'source.remove', $3::jsonb)`,
+        [
+          missionId,
+          actor,
+          JSON.stringify({ sourceId, path: row.path, kind: row.kind }),
+        ],
+      );
+      return row;
+    });
+  }
+
+  async listMissionEvents(missionId: number): Promise<MissionEventRow[]> {
+    const result = await this.pool.query<MissionEventRow>(
+      `SELECT * FROM mission_events
+       WHERE mission_id = $1
+       ORDER BY created_at ASC, id ASC`,
+      [missionId],
+    );
+    return result.rows;
+  }
+
+  /**
+   * Hard-delete a verify fixture mission. Caller must enforce verify:admin,
+   * staging host/env, and marker checks before invoking.
+   */
+  async deleteVerifyFixture(missionId: number): Promise<MissionRow | null> {
+    return this.transaction(async (client) => {
+      const current = await client.query<MissionRow>(
+        'SELECT * FROM missions WHERE id = $1 FOR UPDATE',
+        [missionId],
+      );
+      const mission = current.rows[0];
+      if (!mission) {
+        return null;
+      }
+      if (!isVerifyFixtureMission(mission)) {
+        throw new VerifyFixtureRejectedError(missionId);
+      }
+      await client.query('DELETE FROM missions WHERE id = $1', [missionId]);
+      return mission;
+    });
   }
 
   async findActiveClientByTokenHash(

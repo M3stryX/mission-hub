@@ -131,6 +131,21 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     ).toBe(401);
   });
 
+  it('rejects minting verify:admin onto service clients', async () => {
+    expect(
+      (
+        await app.request('http://localhost/api/v1/admin/clients', {
+          method: 'POST',
+          headers: adminAuth,
+          body: JSON.stringify({
+            clientId: 'verify-mint-blocked',
+            scopes: ['missions:read', 'verify:admin'],
+          }),
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it('creates and updates a mission with durable audit events', async () => {
     const create = await app.request('http://localhost/api/v1/missions', {
       method: 'POST',
@@ -208,10 +223,253 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     ).toBe(201);
 
     const events = await app.request(`http://localhost/api/v1/runs/${run.run.id}/events`, { headers: auth });
-    const eventBody = (await events.json()) as { events: Array<{ kind: string }> };
+    const eventBody = (await events.json()) as {
+      events: Array<{ kind: string; actor: string; client_id: string | null }>;
+    };
     expect(eventBody.events.map((event) => event.kind)).toEqual([
       'run.created',
       'run.status_changed',
+      'run.summary_recorded',
+      'run.evidence_recorded',
     ]);
+    expect(eventBody.events.every((event) => event.actor === 'contract-test')).toBe(
+      true,
+    );
+  });
+
+  it('enforces checklist ownership, ordering and audit events', async () => {
+    const missionA = (
+      await (
+        await app.request('http://localhost/api/v1/missions', {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ title: 'Checklist A' }),
+        })
+      ).json()
+    ) as { mission: { id: number } };
+    const missionB = (
+      await (
+        await app.request('http://localhost/api/v1/missions', {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ title: 'Checklist B' }),
+        })
+      ).json()
+    ) as { mission: { id: number } };
+
+    const created = await app.request(
+      `http://localhost/api/v1/missions/${missionA.mission.id}/checklist`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ item: 'First', position: 0 }),
+      },
+    );
+    expect(created.status).toBe(201);
+    const item = (await created.json()) as {
+      item: { id: number; position: number };
+    };
+
+    expect(
+      (
+        await app.request(
+          `http://localhost/api/v1/missions/${missionB.mission.id}/checklist/${item.item.id}`,
+          {
+            method: 'PATCH',
+            headers: auth,
+            body: JSON.stringify({ done: true }),
+          },
+        )
+      ).status,
+    ).toBe(404);
+
+    const updated = await app.request(
+      `http://localhost/api/v1/missions/${missionA.mission.id}/checklist/${item.item.id}`,
+      {
+        method: 'PATCH',
+        headers: auth,
+        body: JSON.stringify({ done: true, position: 2 }),
+      },
+    );
+    expect(updated.status).toBe(200);
+
+    const audit = await pool.query<{ kind: string; actor: string }>(
+      `SELECT kind, actor FROM mission_events
+       WHERE mission_id = $1 AND kind LIKE 'checklist.%'
+       ORDER BY id`,
+      [missionA.mission.id],
+    );
+    expect(audit.rows.map((row) => row.kind)).toEqual([
+      'checklist.add',
+      'checklist.update',
+    ]);
+    expect(audit.rows.every((row) => row.actor === 'contract-test')).toBe(true);
+  });
+
+  it('enforces source path uniqueness and cross-mission 404', async () => {
+    const missionA = (
+      await (
+        await app.request('http://localhost/api/v1/missions', {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ title: 'Sources A' }),
+        })
+      ).json()
+    ) as { mission: { id: number } };
+    const missionB = (
+      await (
+        await app.request('http://localhost/api/v1/missions', {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({ title: 'Sources B' }),
+        })
+      ).json()
+    ) as { mission: { id: number } };
+
+    const created = await app.request(
+      `http://localhost/api/v1/missions/${missionA.mission.id}/sources`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          label: 'README',
+          path: 'docs/readme.md',
+          kind: 'doc',
+        }),
+      },
+    );
+    expect(created.status).toBe(201);
+    const source = (await created.json()) as { source: { id: number } };
+
+    expect(
+      (
+        await app.request(
+          `http://localhost/api/v1/missions/${missionA.mission.id}/sources`,
+          {
+            method: 'POST',
+            headers: auth,
+            body: JSON.stringify({
+              label: 'README dup',
+              path: 'docs/readme.md',
+              kind: 'doc',
+            }),
+          },
+        )
+      ).status,
+    ).toBe(409);
+
+    expect(
+      (
+        await app.request(
+          `http://localhost/api/v1/missions/${missionB.mission.id}/sources/${source.source.id}`,
+          { method: 'DELETE', headers: auth },
+        )
+      ).status,
+    ).toBe(404);
+  });
+
+  it('cleans verify fixtures only with verify:admin on staging hosts', async () => {
+    const verifyApp = createApp(new MissionHubStore(pool), {
+      envCredentials: [
+        ...credentials,
+        {
+          clientId: 'verify-test',
+          token: 'verify-token',
+          scopes: new Set<Scope>([...allScopes, 'verify:admin']),
+        },
+      ],
+      adminToken,
+      allowDestructiveVerify: true,
+    });
+    const verifyAuth = {
+      ...host,
+      Authorization: 'Bearer verify-token',
+      'Content-Type': 'application/json',
+    };
+
+    const fixture = await verifyApp.request('http://localhost/api/v1/missions', {
+      method: 'POST',
+      headers: verifyAuth,
+      body: JSON.stringify({
+        title: '[VERIFY] ephemeral',
+        tags: 'mh-runtime-verify',
+      }),
+    });
+    expect(fixture.status).toBe(201);
+    const created = (await fixture.json()) as { mission: { id: number } };
+
+    expect(
+      (
+        await verifyApp.request(
+          `http://localhost/api/v1/admin/verify-fixtures/${created.mission.id}`,
+          { method: 'DELETE', headers: adminAuth },
+        )
+      ).status,
+    ).toBe(401);
+
+    const normalMission = await verifyApp.request(
+      'http://localhost/api/v1/missions',
+      {
+        method: 'POST',
+        headers: verifyAuth,
+        body: JSON.stringify({ title: 'Normal mission' }),
+      },
+    );
+    const normal = (await normalMission.json()) as { mission: { id: number } };
+    expect(
+      (
+        await verifyApp.request(
+          `http://localhost/api/v1/admin/verify-fixtures/${normal.mission.id}`,
+          { method: 'DELETE', headers: verifyAuth },
+        )
+      ).status,
+    ).toBe(403);
+
+    const deleted = await verifyApp.request(
+      `http://localhost/api/v1/admin/verify-fixtures/${created.mission.id}`,
+      { method: 'DELETE', headers: verifyAuth },
+    );
+    expect(deleted.status).toBe(200);
+
+    const prodApp = createApp(new MissionHubStore(pool), {
+      envCredentials: [
+        {
+          clientId: 'verify-test',
+          token: 'verify-token',
+          scopes: new Set<Scope>([...allScopes, 'verify:admin']),
+        },
+      ],
+      allowDestructiveVerify: true,
+    });
+    const prodFixture = await prodApp.request(
+      'http://mission-hub.lan/api/v1/missions',
+      {
+        method: 'POST',
+        headers: {
+          Host: 'mission-hub.lan',
+          Authorization: 'Bearer verify-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: '[VERIFY] prod blocked',
+          tags: 'mh-runtime-verify',
+        }),
+      },
+    );
+    const prodCreated = (await prodFixture.json()) as { mission: { id: number } };
+    expect(
+      (
+        await prodApp.request(
+          `http://mission-hub.lan/api/v1/admin/verify-fixtures/${prodCreated.mission.id}`,
+          {
+            method: 'DELETE',
+            headers: {
+              Host: 'mission-hub.lan',
+              Authorization: 'Bearer verify-token',
+            },
+          },
+        )
+      ).status,
+    ).toBe(403);
   });
 });

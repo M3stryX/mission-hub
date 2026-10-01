@@ -5,6 +5,7 @@ import {
   extractBearerToken,
   hashToken,
   hasScopes,
+  isPrivilegedScope,
   isScope,
   type ClientCredential,
   type Principal,
@@ -47,7 +48,8 @@ export async function resolvePrincipal(
 
   const scopes = new Set<Scope>();
   for (const scope of row.scopes) {
-    if (isScope(scope) && scope !== 'clients:admin') {
+    // clients:admin is admin-token only; verify:admin may be present on seeded DB clients.
+    if (isScope(scope) && !isPrivilegedScope(scope)) {
       scopes.add(scope);
     }
   }

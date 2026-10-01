@@ -1,0 +1,122 @@
+/**
+ * Machine-checkable contract inventory for Mission Hub.
+ * Keep in sync with schema enums, auth scopes, REST routes, and MCP tools.
+ */
+
+export const CONTRACT_ENUMS = {
+  mission_status: [
+    'backlog',
+    'todo',
+    'in_progress',
+    'review',
+    'done',
+    'blocked',
+  ],
+  run_status: ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED'],
+  review_state: ['NONE', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
+  summary_type: [
+    'agent_self_report',
+    'reviewer_validated',
+    'operator_note',
+  ],
+  source_kind: ['doc', 'link'],
+  session_status: ['OPEN', 'CLOSED', 'ABORTED'],
+} as const;
+
+export const CONTRACT_SCOPES = [
+  'missions:read',
+  'missions:write',
+  'runs:read',
+  'runs:write',
+  'summaries:read',
+  'summaries:write',
+  'evidence:read',
+  'evidence:write',
+  'clients:admin',
+  'verify:admin',
+] as const;
+
+export const CONTRACT_TABLES = [
+  'missions',
+  'mission_checklist_items',
+  'mission_sources',
+  'mission_events',
+  'agent_sessions',
+  'execution_runs',
+  'execution_events',
+  'summaries',
+  'evidence',
+  'api_clients',
+  'schema_migrations',
+] as const;
+
+export const CONTRACT_REST_ROUTES = [
+  'GET /health',
+  'GET /ready',
+  'GET /api/v1/admin/clients',
+  'POST /api/v1/admin/clients',
+  'POST /api/v1/admin/clients/:clientId/revoke',
+  'DELETE /api/v1/admin/verify-fixtures/:missionId',
+  'GET /api/v1/missions',
+  'GET /api/v1/missions/:id',
+  'POST /api/v1/missions',
+  'PATCH /api/v1/missions/:id',
+  'GET /api/v1/missions/:id/checklist',
+  'POST /api/v1/missions/:id/checklist',
+  'PATCH /api/v1/missions/:id/checklist/:itemId',
+  'DELETE /api/v1/missions/:id/checklist/:itemId',
+  'GET /api/v1/missions/:id/sources',
+  'POST /api/v1/missions/:id/sources',
+  'DELETE /api/v1/missions/:id/sources/:sourceId',
+  'GET /api/v1/missions/:id/events',
+  'GET /api/v1/missions/:id/runs',
+  'POST /api/v1/runs',
+  'PATCH /api/v1/runs/:id/status',
+  'GET /api/v1/runs/:id/events',
+  'POST /api/v1/runs/:id/summaries',
+  'GET /api/v1/runs/:id/summaries',
+  'POST /api/v1/runs/:id/evidence',
+  'GET /api/v1/runs/:id/evidence',
+  'ALL /mcp',
+] as const;
+
+export const CONTRACT_MCP_TOOLS = [
+  'missions.list',
+  'missions.get',
+  'missions.create',
+  'missions.update',
+  'missions.checklist.list',
+  'missions.checklist.add',
+  'missions.checklist.update',
+  'missions.checklist.remove',
+  'missions.sources.list',
+  'missions.sources.add',
+  'missions.sources.remove',
+  'missions.events.list',
+  'runs.list',
+  'runs.create',
+  'runs.updateStatus',
+  'runs.listEvents',
+  'runs.recordSummary',
+  'runs.listSummaries',
+  'runs.recordEvidence',
+  'runs.listEvidence',
+] as const;
+
+export interface ContractInventory {
+  enums: typeof CONTRACT_ENUMS;
+  scopes: typeof CONTRACT_SCOPES;
+  tables: typeof CONTRACT_TABLES;
+  restRoutes: typeof CONTRACT_REST_ROUTES;
+  mcpTools: typeof CONTRACT_MCP_TOOLS;
+}
+
+export function buildContractInventory(): ContractInventory {
+  return {
+    enums: CONTRACT_ENUMS,
+    scopes: CONTRACT_SCOPES,
+    tables: CONTRACT_TABLES,
+    restRoutes: CONTRACT_REST_ROUTES,
+    mcpTools: CONTRACT_MCP_TOOLS,
+  };
+}

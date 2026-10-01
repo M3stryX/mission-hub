@@ -35,7 +35,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
         run: pnpm lint
@@ -43,7 +43,10 @@ jobs:
       - name: TypeCheck
         run: pnpm typecheck
 
-      - name: Migrate ephemeral PostgreSQL
+      - name: Migrate ephemeral PostgreSQL (fresh)
+        run: pnpm db:migrate
+
+      - name: Migrate ephemeral PostgreSQL (idempotent second boot)
         run: pnpm db:migrate
 
       - name: Import representative legacy fixture
@@ -54,3 +57,6 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Docker build
+        run: docker build -t mission-hub:ci .

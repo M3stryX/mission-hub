@@ -9,8 +9,13 @@ export type Scope =
   | 'summaries:write'
   | 'evidence:read'
   | 'evidence:write'
-  | 'clients:admin';
+  | 'clients:admin'
+  | 'verify:admin';
 
+/**
+ * Scopes usable by seeded service clients (env JSON / DB).
+ * Includes verify:admin for the dedicated staging verify credential.
+ */
 export const ALL_SERVICE_SCOPES: readonly Scope[] = [
   'missions:read',
   'missions:write',
@@ -20,6 +25,19 @@ export const ALL_SERVICE_SCOPES: readonly Scope[] = [
   'summaries:write',
   'evidence:read',
   'evidence:write',
+  'verify:admin',
+];
+
+/** Scopes that may only come from the admin mint token principal. */
+export const PRIVILEGED_SCOPES: readonly Scope[] = ['clients:admin'];
+
+/**
+ * Scopes that must never be granted via POST /admin/clients mint.
+ * verify:admin is seedable for the staging verify client, but not mintable.
+ */
+export const MINT_FORBIDDEN_SCOPES: readonly Scope[] = [
+  'clients:admin',
+  'verify:admin',
 ];
 
 export interface ClientCredential {
@@ -38,10 +56,21 @@ interface ClientConfigEntry {
   scopes: Scope[];
 }
 
-const VALID_SCOPES = new Set<string>([...ALL_SERVICE_SCOPES, 'clients:admin']);
+const VALID_SCOPES = new Set<string>([
+  ...ALL_SERVICE_SCOPES,
+  ...PRIVILEGED_SCOPES,
+]);
 
 export function isScope(value: string): value is Scope {
   return VALID_SCOPES.has(value);
+}
+
+export function isPrivilegedScope(value: Scope): boolean {
+  return (PRIVILEGED_SCOPES as readonly string[]).includes(value);
+}
+
+export function isMintForbiddenScope(value: Scope): boolean {
+  return (MINT_FORBIDDEN_SCOPES as readonly string[]).includes(value);
 }
 
 export function parseScopes(values: readonly string[]): Scope[] {
@@ -50,8 +79,8 @@ export function parseScopes(values: readonly string[]): Scope[] {
     if (!isScope(value)) {
       throw new Error(`invalid_scope:${value}`);
     }
-    if (value === 'clients:admin') {
-      throw new Error('clients:admin_cannot_be_granted_to_service_clients');
+    if (isMintForbiddenScope(value)) {
+      throw new Error(`${value}_cannot_be_granted_to_service_clients`);
     }
     scopes.push(value);
   }
@@ -70,7 +99,11 @@ export function loadClientCredentials(
   return Object.entries(parsed).map(([clientId, entry]) => ({
     clientId,
     token: entry.token,
-    scopes: new Set(entry.scopes.filter((scope) => scope !== 'clients:admin')),
+    scopes: new Set(
+      entry.scopes.filter(
+        (scope) => isScope(scope) && !isPrivilegedScope(scope),
+      ),
+    ),
   }));
 }
 

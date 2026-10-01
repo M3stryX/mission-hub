@@ -60,11 +60,23 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
       'missions.list',
       'missions.get',
       'missions.create',
+      'missions.update',
+      'missions.checklist.list',
+      'missions.checklist.add',
+      'missions.checklist.update',
+      'missions.checklist.remove',
+      'missions.sources.list',
+      'missions.sources.add',
+      'missions.sources.remove',
+      'missions.events.list',
       'runs.list',
       'runs.create',
       'runs.updateStatus',
+      'runs.listEvents',
       'runs.recordSummary',
+      'runs.listSummaries',
       'runs.recordEvidence',
+      'runs.listEvidence',
     ]) {
       expect(names).toContain(required);
     }
@@ -74,6 +86,15 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
       arguments: { title: 'MCP contract mission', status: 'todo', priority: 1 },
     });
     expect(created.isError).not.toBe(true);
+
+    const updated = await client.callTool({
+      name: 'missions.update',
+      arguments: {
+        id: (created.structuredContent as { result: { id: number } }).result.id,
+        status: 'in_progress',
+      },
+    });
+    expect(updated.isError).not.toBe(true);
 
     await client.close();
   });

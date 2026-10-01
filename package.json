@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "lint": "eslint src scripts tests",
     "test": "vitest run",
+    "test:contract-inventory": "vitest run tests/contract-inventory.test.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "clients": "tsx scripts/clients.ts",
     "legacy:export": "python3 scripts/export-legacy-sqlite.py",
