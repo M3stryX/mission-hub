@@ -1,7 +1,13 @@
 /**
  * Machine-checkable contract inventory for Mission Hub.
- * Keep in sync with schema enums, auth scopes, REST routes, and MCP tools.
+ * Keep in sync with schema enums, auth scopes, REST routes, MCP tools,
+ * MCP descriptions, and docs/AGENT_USAGE.md.
  */
+
+export const AGENT_USAGE_CONTRACT = {
+  version: 'v1',
+  path: 'docs/AGENT_USAGE.md',
+} as const;
 
 export const CONTRACT_ENUMS = {
   mission_status: [
@@ -21,6 +27,7 @@ export const CONTRACT_ENUMS = {
   ],
   source_kind: ['doc', 'link'],
   session_status: ['OPEN', 'CLOSED', 'ABORTED'],
+  claim_release_reason: ['completed', 'failed', 'abandoned', 'expired'],
 } as const;
 
 export const CONTRACT_SCOPES = [
@@ -47,6 +54,7 @@ export const CONTRACT_TABLES = [
   'summaries',
   'evidence',
   'api_clients',
+  'mission_claims',
   'schema_migrations',
 ] as const;
 
@@ -69,6 +77,10 @@ export const CONTRACT_REST_ROUTES = [
   'POST /api/v1/missions/:id/sources',
   'DELETE /api/v1/missions/:id/sources/:sourceId',
   'GET /api/v1/missions/:id/events',
+  'GET /api/v1/missions/:id/claim',
+  'POST /api/v1/missions/:id/claim',
+  'POST /api/v1/claims/:claimId/renew',
+  'POST /api/v1/claims/:claimId/release',
   'GET /api/v1/missions/:id/runs',
   'POST /api/v1/runs',
   'PATCH /api/v1/runs/:id/status',
@@ -93,6 +105,10 @@ export const CONTRACT_MCP_TOOLS = [
   'missions.sources.add',
   'missions.sources.remove',
   'missions.events.list',
+  'missions.claim.get',
+  'missions.claim',
+  'missions.claim.renew',
+  'missions.claim.release',
   'runs.list',
   'runs.create',
   'runs.updateStatus',
@@ -103,20 +119,76 @@ export const CONTRACT_MCP_TOOLS = [
   'runs.listEvidence',
 ] as const;
 
+/** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
+export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
+  'missions.list':
+    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v1.',
+  'missions.get':
+    'Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.',
+  'missions.create':
+    'Create a durable mission (business state). Set status todo when actionable. Does not claim or create a run — call missions.claim when exclusive execution is required.',
+  'missions.update':
+    'Patch durable mission fields including business status (backlog…done/blocked). Never use status as an execution lock; use missions.claim / renew / release.',
+  'missions.checklist.list':
+    'List ordered checklist gates for a mission (progress decomposition).',
+  'missions.checklist.add':
+    'Add an ordered checklist gate to a mission.',
+  'missions.checklist.update':
+    'Update a checklist item (text, done, position) owned by the mission.',
+  'missions.checklist.remove':
+    'Remove a checklist item owned by the mission.',
+  'missions.sources.list':
+    'List linked sources (docs/links) for a mission.',
+  'missions.sources.add':
+    'Attach a unique source path/URL (kind doc|link). Prefer sources over stuffing large docs into the body.',
+  'missions.sources.remove':
+    'Remove a source owned by the mission.',
+  'missions.events.list':
+    'List append-only mission audit events (includes claim.acquired/renewed/expired/released and expiry diagnosis).',
+  'missions.claim.get':
+    'Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.',
+  'missions.claim':
+    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v1.',
+  'missions.claim.renew':
+    'Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.',
+  'missions.claim.release':
+    'Release an owned claim. completed requires summary+evidence and terminalizes the run COMPLETED; failed|abandoned terminalizes FAILED. Couples claim and run in one transaction.',
+  'runs.list':
+    'List execution runs for a mission (newest first).',
+  'runs.create':
+    'Create a run without claiming. Prefer missions.claim for exclusive work (it already creates the run). Reuse externalRunId for idempotent retries.',
+  'runs.updateStatus':
+    'Update run status (PENDING|RUNNING|COMPLETED|FAILED). After claim expiry/reclaim, previous owners are fenced (claim_fenced). Prefer claim.release for terminalization on claimed work.',
+  'runs.listEvents':
+    'List execution events for a run (status changes, claim events, summaries, evidence).',
+  'runs.recordSummary':
+    'Append a typed summary (agent_self_report|reviewer_validated|operator_note). Required before claim.release completed.',
+  'runs.listSummaries':
+    'List summaries for a run.',
+  'runs.recordEvidence':
+    'Append evidence (kind, label, uri, metadata). Required before claim.release completed when proving work.',
+  'runs.listEvidence':
+    'List evidence references for a run.',
+} as const satisfies Record<(typeof CONTRACT_MCP_TOOLS)[number], string>;
+
 export interface ContractInventory {
+  agentUsage: typeof AGENT_USAGE_CONTRACT;
   enums: typeof CONTRACT_ENUMS;
   scopes: typeof CONTRACT_SCOPES;
   tables: typeof CONTRACT_TABLES;
   restRoutes: typeof CONTRACT_REST_ROUTES;
   mcpTools: typeof CONTRACT_MCP_TOOLS;
+  mcpToolDescriptions: typeof CONTRACT_MCP_TOOL_DESCRIPTIONS;
 }
 
 export function buildContractInventory(): ContractInventory {
   return {
+    agentUsage: AGENT_USAGE_CONTRACT,
     enums: CONTRACT_ENUMS,
     scopes: CONTRACT_SCOPES,
     tables: CONTRACT_TABLES,
     restRoutes: CONTRACT_REST_ROUTES,
     mcpTools: CONTRACT_MCP_TOOLS,
+    mcpToolDescriptions: CONTRACT_MCP_TOOL_DESCRIPTIONS,
   };
 }

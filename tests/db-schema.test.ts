@@ -9,7 +9,7 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
   beforeAll(async () => {
     await pool.query('SELECT 1');
     await pool.query(
-      'TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions RESTART IDENTITY CASCADE',
+      'TRUNCATE evidence, summaries, execution_events, mission_claims, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions RESTART IDENTITY CASCADE',
     );
     await pool.query(
       `INSERT INTO missions(
@@ -57,6 +57,7 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
       'summaries',
       'evidence',
       'api_clients',
+      'mission_claims',
       'schema_migrations',
     ]) {
       expect(tables).toContain(required);
