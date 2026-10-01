@@ -21,16 +21,25 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   const credentials: ClientCredential[] = [
     { clientId: 'contract-test', token: 'contract-token', scopes: new Set(allScopes) },
   ];
-  const app = createApp(new MissionHubStore(pool), credentials);
+  const adminToken = 'contract-admin-token';
+  const app = createApp(new MissionHubStore(pool), {
+    envCredentials: credentials,
+    adminToken,
+  });
   const host = { Host: 'localhost' };
   const auth = {
     ...host,
     Authorization: 'Bearer contract-token',
     'Content-Type': 'application/json',
   };
+  const adminAuth = {
+    ...host,
+    Authorization: `Bearer ${adminToken}`,
+    'Content-Type': 'application/json',
+  };
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
   });
 
   afterAll(async () => {
@@ -51,6 +60,72 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       (
         await app.request('http://localhost/api/v1/missions', {
           headers: host,
+        })
+      ).status,
+    ).toBe(401);
+  });
+
+  it('creates hashed clients via admin token and authenticates them from the database', async () => {
+    expect(
+      (
+        await app.request('http://localhost/api/v1/admin/clients', {
+          method: 'POST',
+          headers: auth,
+          body: JSON.stringify({
+            clientId: 'n8n-client',
+            scopes: ['missions:read', 'missions:write'],
+          }),
+        })
+      ).status,
+    ).toBe(401);
+
+    const created = await app.request('http://localhost/api/v1/admin/clients', {
+      method: 'POST',
+      headers: adminAuth,
+      body: JSON.stringify({
+        clientId: 'n8n-client',
+        scopes: ['missions:read', 'missions:write'],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as {
+      token: string;
+      client: { clientId: string; tokenPrefix: string; scopes: string[] };
+    };
+    expect(body.client.clientId).toBe('n8n-client');
+    expect(body.token.startsWith('mh_')).toBe(true);
+    expect(body.client.tokenPrefix).toBe(body.token.slice(0, 10));
+
+    const dbClientAuth = {
+      ...host,
+      Authorization: `Bearer ${body.token}`,
+      'Content-Type': 'application/json',
+    };
+    const mission = await app.request('http://localhost/api/v1/missions', {
+      method: 'POST',
+      headers: dbClientAuth,
+      body: JSON.stringify({ title: 'DB client mission' }),
+    });
+    expect(mission.status).toBe(201);
+
+    const listed = await app.request('http://localhost/api/v1/admin/clients', {
+      headers: adminAuth,
+    });
+    expect(listed.status).toBe(200);
+    const listBody = (await listed.json()) as {
+      clients: Array<{ clientId: string; revokedAt: string | null }>;
+    };
+    expect(listBody.clients.map((client) => client.clientId)).toContain('n8n-client');
+
+    const revoked = await app.request(
+      'http://localhost/api/v1/admin/clients/n8n-client/revoke',
+      { method: 'POST', headers: adminAuth },
+    );
+    expect(revoked.status).toBe(200);
+    expect(
+      (
+        await app.request('http://localhost/api/v1/missions', {
+          headers: dbClientAuth,
         })
       ).status,
     ).toBe(401);

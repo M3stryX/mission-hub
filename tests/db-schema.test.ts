@@ -56,10 +56,36 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
       'execution_events',
       'summaries',
       'evidence',
+      'api_clients',
       'schema_migrations',
     ]) {
       expect(tables).toContain(required);
     }
+  });
+
+  it('stores hashed api clients with unique client_id and token_hash', async () => {
+    await pool.query('TRUNCATE api_clients RESTART IDENTITY CASCADE');
+    await pool.query(
+      `INSERT INTO api_clients(client_id, token_prefix, token_hash, scopes)
+       VALUES ('fixture-client', 'mh_fixture', $1, ARRAY['missions:read']::text[])`,
+      ['a'.repeat(64)],
+    );
+
+    await expect(
+      pool.query(
+        `INSERT INTO api_clients(client_id, token_prefix, token_hash, scopes)
+         VALUES ('fixture-client', 'mh_other', $1, ARRAY['missions:write']::text[])`,
+        ['b'.repeat(64)],
+      ),
+    ).rejects.toThrow();
+
+    await expect(
+      pool.query(
+        `INSERT INTO api_clients(client_id, token_prefix, token_hash, scopes)
+         VALUES ('other-client', 'mh_other', $1, ARRAY['missions:write']::text[])`,
+        ['a'.repeat(64)],
+      ),
+    ).rejects.toThrow();
   });
 
   it('preserves representative legacy mission relationships and records', async () => {

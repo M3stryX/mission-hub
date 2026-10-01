@@ -4,7 +4,7 @@ import type { MissionHubStore } from '../src/db/store.js';
 
 describe('GET /health', () => {
   it('returns 200 and an ok status without requiring database access', async () => {
-    const app = createApp({} as MissionHubStore, []);
+    const app = createApp({} as MissionHubStore, {});
     const response = await app.request('http://localhost/health', {
       headers: { Host: 'localhost' },
     });

@@ -22,10 +22,12 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
   const credentials: ClientCredential[] = [
     { clientId: 'mcp-test', token: 'mcp-token', scopes: new Set(allScopes) },
   ];
-  const app = createApp(new MissionHubStore(pool), credentials);
+  const app = createApp(new MissionHubStore(pool), {
+    envCredentials: credentials,
+  });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions RESTART IDENTITY CASCADE');
+    await pool.query('TRUNCATE evidence, summaries, execution_events, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
   });
 
   afterAll(async () => {

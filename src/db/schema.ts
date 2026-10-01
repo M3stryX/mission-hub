@@ -233,6 +233,24 @@ export const evidence = pgTable(
   }),
 );
 
+export const apiClients = pgTable(
+  'api_clients',
+  {
+    id: serial('id').primaryKey(),
+    clientId: text('client_id').notNull(),
+    tokenPrefix: text('token_prefix').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    scopes: text('scopes').array().notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  },
+  (table) => ({
+    clientIdUnique: uniqueIndex('api_clients_client_id_uidx').on(table.clientId),
+    tokenHashUnique: uniqueIndex('api_clients_token_hash_uidx').on(table.tokenHash),
+  }),
+);
+
 export const schemaMigrations = pgTable('schema_migrations', {
   version: text('version').primaryKey(),
   appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),

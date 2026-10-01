@@ -1,4 +1,10 @@
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
+import {
+  generateClientToken,
+  hashToken,
+  tokenPrefix,
+  type Scope,
+} from '../auth/config.js';
 
 export interface MissionRow extends QueryResultRow {
   id: number;
@@ -63,6 +69,32 @@ export interface EvidenceRow extends QueryResultRow {
   uri: string;
   metadata_json: Record<string, unknown> | null;
   created_at: Date;
+}
+
+export interface ApiClientRow extends QueryResultRow {
+  id: number;
+  client_id: string;
+  token_prefix: string;
+  token_hash: string;
+  scopes: string[];
+  created_at: Date;
+  revoked_at: Date | null;
+  last_used_at: Date | null;
+}
+
+export interface ApiClientPublic {
+  id: number;
+  clientId: string;
+  tokenPrefix: string;
+  scopes: string[];
+  createdAt: Date;
+  revokedAt: Date | null;
+  lastUsedAt: Date | null;
+}
+
+export interface CreatedApiClient {
+  client: ApiClientPublic;
+  token: string;
 }
 
 export interface CreateMissionInput {
@@ -401,6 +433,79 @@ export class MissionHubStore {
     return result.rows;
   }
 
+  async findActiveClientByTokenHash(
+    tokenHash: string,
+  ): Promise<ApiClientRow | null> {
+    const result = await this.pool.query<ApiClientRow>(
+      `SELECT * FROM api_clients
+       WHERE token_hash = $1 AND revoked_at IS NULL
+       LIMIT 1`,
+      [tokenHash],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async touchClientLastUsed(id: number): Promise<void> {
+    await this.pool.query(
+      'UPDATE api_clients SET last_used_at = now() WHERE id = $1',
+      [id],
+    );
+  }
+
+  async listClients(): Promise<ApiClientPublic[]> {
+    const result = await this.pool.query<ApiClientRow>(
+      'SELECT * FROM api_clients ORDER BY client_id',
+    );
+    return result.rows.map(toPublicClient);
+  }
+
+  async createClient(
+    clientId: string,
+    scopes: readonly Scope[],
+  ): Promise<CreatedApiClient> {
+    const token = generateClientToken();
+    const result = await this.pool.query<ApiClientRow>(
+      `INSERT INTO api_clients(client_id, token_prefix, token_hash, scopes)
+       VALUES ($1, $2, $3, $4::text[])
+       RETURNING *`,
+      [clientId, tokenPrefix(token), hashToken(token), [...scopes]],
+    );
+    return {
+      client: toPublicClient(result.rows[0]),
+      token,
+    };
+  }
+
+  async upsertClientFromPlaintext(
+    clientId: string,
+    token: string,
+    scopes: readonly Scope[],
+  ): Promise<ApiClientPublic> {
+    const result = await this.pool.query<ApiClientRow>(
+      `INSERT INTO api_clients(client_id, token_prefix, token_hash, scopes, revoked_at)
+       VALUES ($1, $2, $3, $4::text[], NULL)
+       ON CONFLICT (client_id) DO UPDATE SET
+         token_prefix = EXCLUDED.token_prefix,
+         token_hash = EXCLUDED.token_hash,
+         scopes = EXCLUDED.scopes,
+         revoked_at = NULL
+       RETURNING *`,
+      [clientId, tokenPrefix(token), hashToken(token), [...scopes]],
+    );
+    return toPublicClient(result.rows[0]);
+  }
+
+  async revokeClient(clientId: string): Promise<ApiClientPublic | null> {
+    const result = await this.pool.query<ApiClientRow>(
+      `UPDATE api_clients
+       SET revoked_at = now()
+       WHERE client_id = $1 AND revoked_at IS NULL
+       RETURNING *`,
+      [clientId],
+    );
+    return result.rows[0] ? toPublicClient(result.rows[0]) : null;
+  }
+
   private async transaction<T>(
     operation: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
@@ -417,4 +522,16 @@ export class MissionHubStore {
       client.release();
     }
   }
+}
+
+function toPublicClient(row: ApiClientRow): ApiClientPublic {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    tokenPrefix: row.token_prefix,
+    scopes: row.scopes,
+    createdAt: row.created_at,
+    revokedAt: row.revoked_at,
+    lastUsedAt: row.last_used_at,
+  };
 }
