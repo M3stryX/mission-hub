@@ -5,7 +5,7 @@
  */
 
 export const AGENT_USAGE_CONTRACT = {
-  version: 'v1',
+  version: 'v1.1',
   path: 'docs/AGENT_USAGE.md',
 } as const;
 
