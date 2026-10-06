@@ -126,6 +126,63 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
     expect(result.rows.map((row) => row.id)).toContain(11);
   });
 
+  it('supports the minimal research report model without a parallel report table', async () => {
+    const tables = await pool.query<{ table_name: string }>(
+      `SELECT table_name
+       FROM information_schema.tables
+       WHERE table_schema = 'public'`,
+    );
+    expect(tables.rows.map((row) => row.table_name)).not.toContain('research_reports');
+
+    const purposeColumn = await pool.query<{ is_nullable: string }>(
+      `SELECT is_nullable
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'execution_runs'
+         AND column_name = 'purpose'`,
+    );
+    expect(purposeColumn.rows[0]?.is_nullable).toBe('YES');
+
+    const summaryMetadata = await pool.query<{ data_type: string }>(
+      `SELECT data_type
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'summaries'
+         AND column_name = 'metadata_json'`,
+    );
+    expect(summaryMetadata.rows[0]?.data_type).toBe('jsonb');
+
+    const purposeValues = await pool.query<{ enumlabel: string }>(
+      `SELECT enumlabel
+       FROM pg_enum
+       JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+       WHERE pg_type.typname = 'run_purpose'
+       ORDER BY enumsortorder`,
+    );
+    expect(purposeValues.rows.map((row) => row.enumlabel)).toEqual([
+      'research',
+      'implementation',
+      'runtime_verification',
+      'independent_review',
+      'incident_analysis',
+      'maintenance',
+      'migration',
+      'benchmark',
+      'other',
+    ]);
+
+    const summaryValues = await pool.query<{ enumlabel: string }>(
+      `SELECT enumlabel
+       FROM pg_enum
+       JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+       WHERE pg_type.typname = 'summary_type'
+       ORDER BY enumsortorder`,
+    );
+    expect(summaryValues.rows.map((row) => row.enumlabel)).toContain(
+      'research_report',
+    );
+  });
+
   it('enforces execution trace uniqueness and foreign keys', async () => {
     const session = await pool.query<{ id: number }>(
       `INSERT INTO agent_sessions(
