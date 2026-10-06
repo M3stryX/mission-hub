@@ -52,6 +52,18 @@ const createMissionSchema = z.object({
 
 const updateMissionSchema = createMissionSchema.partial();
 
+const runPurpose = z.enum([
+  'research',
+  'implementation',
+  'runtime_verification',
+  'independent_review',
+  'incident_analysis',
+  'maintenance',
+  'migration',
+  'benchmark',
+  'other',
+]);
+
 const createRunSchema = z.object({
   missionId: z.number().int().positive(),
   runtime: z.string().min(1),
@@ -61,6 +73,7 @@ const createRunSchema = z.object({
   correlationId: z.string().nullable().optional(),
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
+  purpose: runPurpose.nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
@@ -78,6 +91,7 @@ const claimMissionSchema = z.object({
   correlationId: z.string().nullable().optional(),
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
+  purpose: runPurpose.nullable().optional(),
 });
 
 const renewClaimSchema = z.object({
@@ -100,16 +114,57 @@ const updateRunStatusSchema = z.object({
     .optional(),
 });
 
+const summaryType = z.enum([
+  'agent_self_report',
+  'research_report',
+  'reviewer_validated',
+  'operator_note',
+]);
+
+const summaryMetadataSchema = z
+  .object({
+    schemaVersion: z.string().min(1).optional(),
+    validatesSummaryId: z.number().int().positive().optional(),
+    supersedesSummaryId: z.number().int().positive().optional(),
+  })
+  .passthrough();
+
 const summarySchema = z.object({
-  type: z.enum(['agent_self_report', 'reviewer_validated', 'operator_note']),
+  type: summaryType,
   content: z.string().min(1),
+  metadata: summaryMetadataSchema.nullable().optional(),
 });
+
+const evidenceSourceType = z.enum([
+  'observed_runtime',
+  'real_data',
+  'code_config',
+  'internal_doc',
+  'external_primary',
+  'external_community',
+  'inference',
+]);
+
+const evidenceMetadataSchema = z
+  .object({
+    source_type: evidenceSourceType.optional(),
+    authority: z.string().min(1).optional(),
+    observed_at: z.string().min(1).optional(),
+    retrieved_at: z.string().min(1).optional(),
+    version: z.string().min(1).optional(),
+    supports: z.string().min(1).optional(),
+    confidence: z.union([z.string().min(1), z.number().min(0).max(1)]).optional(),
+    freshness: z.string().min(1).optional(),
+    immutable: z.boolean().optional(),
+    ref_type: z.string().min(1).optional(),
+  })
+  .passthrough();
 
 const evidenceSchema = z.object({
   kind: z.string().min(1),
   label: z.string().min(1),
   uri: z.string().min(1),
-  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  metadata: evidenceMetadataSchema.nullable().optional(),
 });
 
 const createClientSchema = z.object({
@@ -618,7 +673,43 @@ export function createApp(
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
-    return c.json({ runs: await store.listRunsForMission(missionId) });
+    const purposeRaw = c.req.query('purpose');
+    const purpose = purposeRaw ? runPurpose.safeParse(purposeRaw) : null;
+    if (purpose && !purpose.success) {
+      return c.json({ error: 'invalid_purpose' }, 400);
+    }
+    return c.json({
+      runs: await store.listRunsForMission(
+        missionId,
+        purpose?.success ? purpose.data : undefined,
+      ),
+    });
+  });
+
+  app.get('/api/v1/missions/:id/research-reports', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:read',
+      'summaries:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    return c.json({
+      reports: await store.listResearchReportsForMission(missionId),
+    });
+  });
+
+  app.get('/api/v1/missions/:id/research-report', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:read',
+      'summaries:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    return c.json({
+      report: await store.getCanonicalResearchReport(missionId),
+    });
   });
 
   app.post('/api/v1/runs', async (c) => {
@@ -689,6 +780,7 @@ export function createApp(
         parsed.data.type,
         parsed.data.content,
         principal.clientId,
+        parsed.data.metadata ?? null,
       );
       return c.json({ summary }, 201);
     } catch (error) {
@@ -713,7 +805,17 @@ export function createApp(
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
-    return c.json({ summaries: await store.listSummaries(runId) });
+    const typeRaw = c.req.query('type');
+    const type = typeRaw ? summaryType.safeParse(typeRaw) : null;
+    if (type && !type.success) {
+      return c.json({ error: 'invalid_summary_type' }, 400);
+    }
+    return c.json({
+      summaries: await store.listSummaries(
+        runId,
+        type?.success ? type.data : undefined,
+      ),
+    });
   });
 
   app.post('/api/v1/runs/:id/evidence', async (c) => {
