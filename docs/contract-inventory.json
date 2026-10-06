@@ -107,6 +107,8 @@
     "POST /api/v1/claims/:claimId/renew",
     "POST /api/v1/claims/:claimId/release",
     "GET /api/v1/missions/:id/runs",
+    "GET /api/v1/missions/:id/research-reports",
+    "GET /api/v1/missions/:id/research-report",
     "POST /api/v1/runs",
     "PATCH /api/v1/runs/:id/status",
     "GET /api/v1/runs/:id/events",
@@ -114,9 +116,7 @@
     "GET /api/v1/runs/:id/summaries",
     "POST /api/v1/runs/:id/evidence",
     "GET /api/v1/runs/:id/evidence",
-    "ALL /mcp",
-    "GET /api/v1/missions/:id/research-reports",
-    "GET /api/v1/missions/:id/research-report"
+    "ALL /mcp"
   ],
   "mcpTools": [
     "missions.list",
