@@ -43,9 +43,9 @@ export const reviewStateEnum = pgEnum('review_state', [
 ]);
 export const summaryTypeEnum = pgEnum('summary_type', [
   'agent_self_report',
-  'research_report',
   'reviewer_validated',
   'operator_note',
+  'research_report',
 ]);
 
 export const missions = pgTable(
