@@ -33,9 +33,9 @@ export const CONTRACT_ENUMS = {
   review_state: ['NONE', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
   summary_type: [
     'agent_self_report',
-    'research_report',
     'reviewer_validated',
     'operator_note',
+    'research_report',
   ],
   source_kind: ['doc', 'link'],
   session_status: ['OPEN', 'CLOSED', 'ABORTED'],
