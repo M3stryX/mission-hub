@@ -24,6 +24,17 @@ export const missionStatusEnum = pgEnum('mission_status', [
 export const sourceKindEnum = pgEnum('source_kind', ['doc', 'link']);
 export const sessionStatusEnum = pgEnum('session_status', ['OPEN', 'CLOSED', 'ABORTED']);
 export const runStatusEnum = pgEnum('run_status', ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']);
+export const runPurposeEnum = pgEnum('run_purpose', [
+  'research',
+  'implementation',
+  'runtime_verification',
+  'independent_review',
+  'incident_analysis',
+  'maintenance',
+  'migration',
+  'benchmark',
+  'other',
+]);
 export const reviewStateEnum = pgEnum('review_state', [
   'NONE',
   'PENDING_APPROVAL',
@@ -32,6 +43,7 @@ export const reviewStateEnum = pgEnum('review_state', [
 ]);
 export const summaryTypeEnum = pgEnum('summary_type', [
   'agent_self_report',
+  'research_report',
   'reviewer_validated',
   'operator_note',
 ]);
@@ -159,6 +171,7 @@ export const executionRuns = pgTable(
     correlationId: text('correlation_id'),
     provider: text('provider'),
     model: text('model'),
+    purpose: runPurposeEnum('purpose'),
     status: runStatusEnum('status').notNull().default('PENDING'),
     reviewState: reviewStateEnum('review_state').notNull().default('NONE'),
     metadataJson: jsonb('metadata_json').$type<Record<string, unknown> | null>(),
@@ -172,6 +185,10 @@ export const executionRuns = pgTable(
       table.externalRunId,
     ),
     missionIdx: index('execution_runs_mission_idx').on(table.missionId),
+    missionPurposeIdx: index('execution_runs_mission_purpose_idx').on(
+      table.missionId,
+      table.purpose,
+    ),
     sessionIdx: index('execution_runs_session_idx').on(table.sessionId),
     correlationIdx: index('execution_runs_correlation_idx').on(table.correlationId),
   }),
@@ -206,6 +223,7 @@ export const summaries = pgTable(
       .references(() => executionRuns.id, { onDelete: 'cascade' }),
     type: summaryTypeEnum('type').notNull(),
     content: text('content').notNull(),
+    metadataJson: jsonb('metadata_json').$type<Record<string, unknown> | null>(),
     actor: text('actor').notNull(),
     clientId: text('client_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
