@@ -19,9 +19,21 @@ export const CONTRACT_ENUMS = {
     'blocked',
   ],
   run_status: ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED'],
+  run_purpose: [
+    'research',
+    'implementation',
+    'runtime_verification',
+    'independent_review',
+    'incident_analysis',
+    'maintenance',
+    'migration',
+    'benchmark',
+    'other',
+  ],
   review_state: ['NONE', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
   summary_type: [
     'agent_self_report',
+    'research_report',
     'reviewer_validated',
     'operator_note',
   ],
@@ -82,6 +94,8 @@ export const CONTRACT_REST_ROUTES = [
   'POST /api/v1/claims/:claimId/renew',
   'POST /api/v1/claims/:claimId/release',
   'GET /api/v1/missions/:id/runs',
+  'GET /api/v1/missions/:id/research-reports',
+  'GET /api/v1/missions/:id/research-report',
   'POST /api/v1/runs',
   'PATCH /api/v1/runs/:id/status',
   'GET /api/v1/runs/:id/events',
@@ -112,6 +126,8 @@ export const CONTRACT_MCP_TOOLS = [
   'runs.list',
   'runs.create',
   'runs.updateStatus',
+  'research.listReports',
+  'research.getCanonicalReport',
   'runs.listEvents',
   'runs.recordSummary',
   'runs.listSummaries',
@@ -154,19 +170,23 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.claim.release':
     'Release an owned claim. completed requires summary+evidence and terminalizes the run COMPLETED; failed|abandoned terminalizes FAILED. Couples claim and run in one transaction.',
   'runs.list':
-    'List execution runs for a mission (newest first).',
+    'List execution runs for a mission (newest first), optionally filtered by typed purpose. Legacy runs may have purpose=null.',
   'runs.create':
-    'Create a run without claiming. Prefer missions.claim for exclusive work (it already creates the run). Reuse externalRunId for idempotent retries.',
+    'Create a run without claiming, optionally with typed purpose (research|implementation|runtime_verification|independent_review|incident_analysis|maintenance|migration|benchmark|other). Prefer missions.claim for exclusive work.',
   'runs.updateStatus':
     'Update run status (PENDING|RUNNING|COMPLETED|FAILED). After claim expiry/reclaim, previous owners are fenced (claim_fenced). Prefer claim.release for terminalization on claimed work.',
+  'research.listReports':
+    'List all research_report summaries for research-purpose runs on a mission, newest first. The first item is canonical; older reports remain visible.',
+  'research.getCanonicalReport':
+    'Return the canonical research report for a mission: the newest research_report summary attached to a run with purpose=research, or null.',
   'runs.listEvents':
     'List execution events for a run (status changes, claim events, summaries, evidence).',
   'runs.recordSummary':
-    'Append a typed summary (agent_self_report|reviewer_validated|operator_note). Required before claim.release completed.',
+    'Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note) with optional provenance metadata. Required before claim.release completed.',
   'runs.listSummaries':
-    'List summaries for a run.',
+    'List summaries for a run, optionally filtered by summary type.',
   'runs.recordEvidence':
-    'Append evidence (kind, label, uri, metadata). Required before claim.release completed when proving work.',
+    'Append evidence (kind, label, uri, metadata). When research taxonomy is supplied, source_type must be one of observed_runtime|real_data|code_config|internal_doc|external_primary|external_community|inference.',
   'runs.listEvidence':
     'List evidence references for a run.',
 } as const satisfies Record<(typeof CONTRACT_MCP_TOOLS)[number], string>;
