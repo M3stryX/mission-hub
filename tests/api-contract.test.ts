@@ -237,6 +237,218 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     );
   });
 
+  it('creates, validates and discovers canonical research reports', async () => {
+    const missionResponse = await app.request('http://localhost/api/v1/missions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ title: 'Research mission' }),
+    });
+    const mission = (await missionResponse.json()) as { mission: { id: number } };
+
+    const legacyResponse = await app.request('http://localhost/api/v1/runs', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        missionId: mission.mission.id,
+        runtime: 'legacy',
+        agent: 'legacy-agent',
+        externalSessionId: 'legacy-session',
+        externalRunId: 'legacy-run',
+      }),
+    });
+    expect(legacyResponse.status).toBe(201);
+    const legacy = (await legacyResponse.json()) as {
+      run: { id: number; purpose: string | null };
+    };
+    expect(legacy.run.purpose).toBeNull();
+
+    const firstRunResponse = await app.request('http://localhost/api/v1/runs', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        missionId: mission.mission.id,
+        runtime: 'hermes',
+        agent: 'researcher',
+        externalSessionId: 'research-session-1',
+        externalRunId: 'research-run-1',
+        purpose: 'research',
+      }),
+    });
+    expect(firstRunResponse.status).toBe(201);
+    const firstRun = (await firstRunResponse.json()) as {
+      run: { id: number; purpose: string };
+    };
+    expect(firstRun.run.purpose).toBe('research');
+
+    const firstSummaryResponse = await app.request(
+      `http://localhost/api/v1/runs/${firstRun.run.id}/summaries`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          type: 'research_report',
+          content: 'First report',
+          metadata: { schemaVersion: '1.0.0' },
+        }),
+      },
+    );
+    expect(firstSummaryResponse.status).toBe(201);
+    const firstSummary = (await firstSummaryResponse.json()) as {
+      summary: { id: number };
+    };
+
+    const secondRunResponse = await app.request('http://localhost/api/v1/runs', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        missionId: mission.mission.id,
+        runtime: 'opencode',
+        agent: 'researcher',
+        externalSessionId: 'research-session-2',
+        externalRunId: 'research-run-2',
+        purpose: 'research',
+      }),
+    });
+    const secondRun = (await secondRunResponse.json()) as {
+      run: { id: number };
+    };
+
+    const secondSummaryResponse = await app.request(
+      `http://localhost/api/v1/runs/${secondRun.run.id}/summaries`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          type: 'research_report',
+          content: 'Second report',
+          metadata: {
+            schemaVersion: '1.0.0',
+            supersedesSummaryId: firstSummary.summary.id,
+          },
+        }),
+      },
+    );
+    expect(secondSummaryResponse.status).toBe(201);
+    const secondSummary = (await secondSummaryResponse.json()) as {
+      summary: { id: number; metadata_json: Record<string, unknown> };
+    };
+    expect(secondSummary.summary.metadata_json.supersedesSummaryId).toBe(
+      firstSummary.summary.id,
+    );
+
+    const reviewRunResponse = await app.request('http://localhost/api/v1/runs', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        missionId: mission.mission.id,
+        runtime: 'opencode',
+        agent: 'reviewer',
+        externalSessionId: 'review-session',
+        externalRunId: 'review-run',
+        purpose: 'independent_review',
+      }),
+    });
+    const reviewRun = (await reviewRunResponse.json()) as {
+      run: { id: number };
+    };
+    const reviewSummaryResponse = await app.request(
+      `http://localhost/api/v1/runs/${reviewRun.run.id}/summaries`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          type: 'reviewer_validated',
+          content: 'Reviewed',
+          metadata: { validatesSummaryId: secondSummary.summary.id },
+        }),
+      },
+    );
+    expect(reviewSummaryResponse.status).toBe(201);
+
+    const invalidEvidence = await app.request(
+      `http://localhost/api/v1/runs/${secondRun.run.id}/evidence`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          kind: 'source',
+          label: 'Bad taxonomy',
+          uri: 'https://example.invalid/bad',
+          metadata: { source_type: 'unsupported_source_type' },
+        }),
+      },
+    );
+    expect(invalidEvidence.status).toBe(400);
+
+    const validEvidence = await app.request(
+      `http://localhost/api/v1/runs/${secondRun.run.id}/evidence`,
+      {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          kind: 'source',
+          label: 'Runtime observation',
+          uri: 'mission-hub://runtime/observation',
+          metadata: {
+            source_type: 'observed_runtime',
+            authority: 'runtime',
+            confidence: 1,
+          },
+        }),
+      },
+    );
+    expect(validEvidence.status).toBe(201);
+
+    const researchRuns = await app.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/runs?purpose=research`,
+      { headers: auth },
+    );
+    expect(researchRuns.status).toBe(200);
+    const researchRunsBody = (await researchRuns.json()) as {
+      runs: Array<{ purpose: string | null }>;
+    };
+    expect(researchRunsBody.runs).toHaveLength(2);
+    expect(researchRunsBody.runs.every((run) => run.purpose === 'research')).toBe(
+      true,
+    );
+
+    const typedSummaries = await app.request(
+      `http://localhost/api/v1/runs/${secondRun.run.id}/summaries?type=research_report`,
+      { headers: auth },
+    );
+    expect(typedSummaries.status).toBe(200);
+    const typedSummaryBody = (await typedSummaries.json()) as {
+      summaries: Array<{ type: string }>;
+    };
+    expect(typedSummaryBody.summaries.map((summary) => summary.type)).toEqual([
+      'research_report',
+    ]);
+
+    const reportsResponse = await app.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/research-reports`,
+      { headers: auth },
+    );
+    expect(reportsResponse.status).toBe(200);
+    const reports = (await reportsResponse.json()) as {
+      reports: Array<{ id: number; canonical: boolean }>;
+    };
+    expect(reports.reports).toHaveLength(2);
+    expect(reports.reports[0].id).toBe(secondSummary.summary.id);
+    expect(reports.reports[0].canonical).toBe(true);
+    expect(reports.reports[1].id).toBe(firstSummary.summary.id);
+    expect(reports.reports[1].canonical).toBe(false);
+
+    const canonicalResponse = await app.request(
+      `http://localhost/api/v1/missions/${mission.mission.id}/research-report`,
+      { headers: auth },
+    );
+    expect(canonicalResponse.status).toBe(200);
+    const canonical = (await canonicalResponse.json()) as {
+      report: { id: number };
+    };
+    expect(canonical.report.id).toBe(secondSummary.summary.id);
+  });
+
   it('enforces checklist ownership, ordering and audit events', async () => {
     const missionA = (
       await (
