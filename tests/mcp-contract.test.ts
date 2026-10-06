@@ -76,6 +76,8 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
       'runs.list',
       'runs.create',
       'runs.updateStatus',
+      'research.listReports',
+      'research.getCanonicalReport',
       'runs.listEvents',
       'runs.recordSummary',
       'runs.listSummaries',
@@ -99,6 +101,50 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
       },
     });
     expect(updated.isError).not.toBe(true);
+
+    const researchMission = await client.callTool({
+      name: 'missions.create',
+      arguments: { title: 'MCP research mission', status: 'todo', priority: 2 },
+    });
+    const researchMissionId = (
+      researchMission.structuredContent as { result: { id: number } }
+    ).result.id;
+
+    const researchRun = await client.callTool({
+      name: 'runs.create',
+      arguments: {
+        missionId: researchMissionId,
+        runtime: 'opencode',
+        agent: 'researcher',
+        externalSessionId: 'mcp-research-session',
+        externalRunId: 'mcp-research-run',
+        purpose: 'research',
+      },
+    });
+    expect(researchRun.isError).not.toBe(true);
+    const researchRunId = (
+      researchRun.structuredContent as { result: { id: number } }
+    ).result.id;
+
+    const researchSummary = await client.callTool({
+      name: 'runs.recordSummary',
+      arguments: {
+        runId: researchRunId,
+        type: 'research_report',
+        content: 'MCP research report',
+        metadata: { schemaVersion: '1.0.0' },
+      },
+    });
+    expect(researchSummary.isError).not.toBe(true);
+
+    const canonical = await client.callTool({
+      name: 'research.getCanonicalReport',
+      arguments: { missionId: researchMissionId },
+    });
+    expect(canonical.isError).not.toBe(true);
+    expect(
+      (canonical.structuredContent as { result: { type: string } }).result.type,
+    ).toBe('research_report');
 
     await client.close();
   });
