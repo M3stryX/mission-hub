@@ -26,9 +26,9 @@
     ],
     "summary_type": [
       "agent_self_report",
-      "research_report",
       "reviewer_validated",
-      "operator_note"
+      "operator_note",
+      "research_report"
     ],
     "source_kind": [
       "doc",
