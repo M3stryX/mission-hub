@@ -211,6 +211,26 @@ export class ClaimReleaseInconsistentError extends Error {
   }
 }
 
+export class PlanNotOpenError extends Error {
+  readonly missionId: number;
+
+  constructor(missionId: number) {
+    super('plan_not_open');
+    this.name = 'PlanNotOpenError';
+    this.missionId = missionId;
+  }
+}
+
+export class SelfApprovalError extends Error {
+  readonly missionId: number;
+
+  constructor(missionId: number) {
+    super('self_approval');
+    this.name = 'SelfApprovalError';
+    this.missionId = missionId;
+  }
+}
+
 export const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 export const MAX_CLAIM_LEASE_SECONDS = 3600;
 export const CLAIM_RELEASE_REASONS = [
@@ -730,6 +750,118 @@ export class MissionHubStore {
   async getCanonicalResearchReport(missionId: number) {
     const reports = await this.listResearchReportsForMission(missionId);
     return reports[0] ?? null;
+  }
+
+  /**
+   * Jev gate reads (v1.2 = record/read only, no enforcement).
+   * Rows are returned as-is: summaries joined to their run's mission id.
+   */
+  async listJevEvaluationsForMission(
+    missionId: number,
+    checkpoint?: string,
+  ): Promise<Array<SummaryRow & { mission_id: number }>> {
+    const result = checkpoint
+      ? await this.pool.query<SummaryRow & { mission_id: number }>(
+          `SELECT s.*, r.mission_id
+           FROM summaries s
+           JOIN execution_runs r ON r.id = s.run_id
+           WHERE r.mission_id = $1
+             AND s.type = 'jev_decision'::summary_type
+             AND s.metadata_json->>'checkpoint' = $2
+           ORDER BY s.created_at DESC, s.id DESC`,
+          [missionId, checkpoint],
+        )
+      : await this.pool.query<SummaryRow & { mission_id: number }>(
+          `SELECT s.*, r.mission_id
+           FROM summaries s
+           JOIN execution_runs r ON r.id = s.run_id
+           WHERE r.mission_id = $1
+             AND s.type = 'jev_decision'::summary_type
+           ORDER BY s.created_at DESC, s.id DESC`,
+          [missionId],
+        );
+    return result.rows;
+  }
+
+  /** Unfiltered gate view: every jev_decision summary across missions. */
+  async listJevEvaluations(): Promise<
+    Array<SummaryRow & { mission_id: number }>
+  > {
+    const result = await this.pool.query<SummaryRow & { mission_id: number }>(
+      `SELECT s.*, r.mission_id
+       FROM summaries s
+       JOIN execution_runs r ON r.id = s.run_id
+       WHERE s.type = 'jev_decision'::summary_type
+       ORDER BY s.created_at DESC, s.id DESC`,
+    );
+    return result.rows;
+  }
+
+  /**
+   * Single source of truth for plan approval (REST + MCP missions.planApproval).
+   * Returns null when the mission does not exist; throws PlanNotOpenError when
+   * no purpose='planning' run exists yet (draft check, no stage enforcement) and
+   * SelfApprovalError when the approver authored the mission's plan_summary.
+   */
+  async recordPlanApproval(
+    missionId: number,
+    content: string,
+    approver: string,
+    metadata: Record<string, unknown> | null = null,
+  ): Promise<SummaryRow | null> {
+    return this.transaction(async (client) => {
+      const mission = await client.query<{ id: number }>(
+        'SELECT id FROM missions WHERE id = $1',
+        [missionId],
+      );
+      if (!mission.rows[0]) {
+        return null;
+      }
+
+      const planningRun = await client.query<{ id: number }>(
+        `SELECT id FROM execution_runs
+         WHERE mission_id = $1 AND purpose = 'planning'::run_purpose
+         ORDER BY started_at DESC, id DESC
+         LIMIT 1`,
+        [missionId],
+      );
+      if (!planningRun.rows[0]) {
+        throw new PlanNotOpenError(missionId);
+      }
+
+      const selfApproval = await client.query<{ present: boolean }>(
+        `SELECT true AS present
+         FROM summaries s
+         JOIN execution_runs r ON r.id = s.run_id
+         WHERE r.mission_id = $1
+           AND s.type = 'plan_summary'::summary_type
+           AND s.client_id = $2
+         LIMIT 1`,
+        [missionId, approver],
+      );
+      if (selfApproval.rows[0]) {
+        throw new SelfApprovalError(missionId);
+      }
+
+      const runId = planningRun.rows[0].id;
+      const result = await client.query<SummaryRow>(
+        `INSERT INTO summaries(run_id, type, content, metadata_json, actor, client_id)
+         VALUES ($1,'plan_approval'::summary_type,$2,$3::jsonb,$4,$4)
+         RETURNING *`,
+        [runId, content, JSON.stringify(metadata), approver],
+      );
+      const summary = result.rows[0];
+      await client.query(
+        `INSERT INTO execution_events(run_id, actor, client_id, kind, payload_json)
+         VALUES ($1,$2,$2,'run.summary_recorded',$3::jsonb)`,
+        [
+          runId,
+          approver,
+          JSON.stringify({ summaryId: summary.id, type: summary.type }),
+        ],
+      );
+      return summary;
+    });
   }
 
   async addEvidence(

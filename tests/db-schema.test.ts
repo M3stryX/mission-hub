@@ -169,6 +169,9 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
       'migration',
       'benchmark',
       'other',
+      'architecture',
+      'planning',
+      'jev_gate',
     ]);
 
     const summaryValues = await pool.query<{ enumlabel: string }>(
@@ -181,6 +184,36 @@ describe.skipIf(!databaseUrl)('PostgreSQL V1 schema', () => {
     expect(summaryValues.rows.map((row) => row.enumlabel)).toContain(
       'research_report',
     );
+  });
+
+  it('adds the mission_stage enum and the missions.stage column (v1.2)', async () => {
+    const stageValues = await pool.query<{ enumlabel: string }>(
+      `SELECT enumlabel
+       FROM pg_enum
+       JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+       WHERE pg_type.typname = 'mission_stage'
+       ORDER BY enumsortorder`,
+    );
+    expect(stageValues.rows.map((row) => row.enumlabel)).toEqual([
+      'research',
+      'architecture',
+      'plan',
+      'execution',
+      'done',
+    ]);
+
+    const stageColumn = await pool.query<{
+      is_nullable: string;
+      column_default: string;
+    }>(
+      `SELECT is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'missions'
+         AND column_name = 'stage'`,
+    );
+    expect(stageColumn.rows[0]?.is_nullable).toBe('NO');
+    expect(stageColumn.rows[0]?.column_default).toBe("'research'::mission_stage");
   });
 
   it('enforces execution trace uniqueness and foreign keys', async () => {
