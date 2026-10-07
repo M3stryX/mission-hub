@@ -61,6 +61,20 @@ const createRunSchema = z.object({
   correlationId: z.string().nullable().optional(),
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
+  purpose: z
+    .enum([
+      'research',
+      'implementation',
+      'runtime_verification',
+      'independent_review',
+      'incident_analysis',
+      'maintenance',
+      'migration',
+      'benchmark',
+      'other',
+    ])
+    .nullable()
+    .optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
@@ -101,8 +115,22 @@ const updateRunStatusSchema = z.object({
 });
 
 const summarySchema = z.object({
-  type: z.enum(['agent_self_report', 'reviewer_validated', 'operator_note']),
+  type: z.enum([
+    'agent_self_report',
+    'reviewer_validated',
+    'operator_note',
+    'research_report',
+  ]),
   content: z.string().min(1),
+  metadata: z
+    .object({
+      schemaVersion: z.string().min(1).optional(),
+      validatesSummaryId: z.number().int().positive().optional(),
+      supersedesSummaryId: z.number().int().positive().optional(),
+    })
+    .passthrough()
+    .nullable()
+    .optional(),
 });
 
 const evidenceSchema = z.object({
@@ -480,6 +508,38 @@ export function createApp(
     return c.json({ events: await store.listMissionEvents(missionId) });
   });
 
+  app.get('/api/v1/missions/:id/research-reports', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:read',
+      'summaries:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    if (!(await store.getMission(missionId))) {
+      return c.json({ error: 'not_found' }, 404);
+    }
+    return c.json({
+      reports: await store.listResearchReportsForMission(missionId),
+    });
+  });
+
+  app.get('/api/v1/missions/:id/research-report', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:read',
+      'summaries:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    if (!(await store.getMission(missionId))) {
+      return c.json({ error: 'not_found' }, 404);
+    }
+    return c.json({
+      report: await store.getCanonicalResearchReport(missionId),
+    });
+  });
+
   app.get('/api/v1/missions/:id/claim', async (c) => {
     const principal = await principalFor(c.req.header('authorization'), [
       'missions:read',
@@ -689,6 +749,7 @@ export function createApp(
         parsed.data.type,
         parsed.data.content,
         principal.clientId,
+        parsed.data.metadata ?? null,
       );
       return c.json({ summary }, 201);
     } catch (error) {
@@ -713,7 +774,8 @@ export function createApp(
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
-    return c.json({ summaries: await store.listSummaries(runId) });
+    const type = c.req.query('type');
+    return c.json({ summaries: await store.listSummaries(runId, type ?? undefined) });
   });
 
   app.post('/api/v1/runs/:id/evidence', async (c) => {
