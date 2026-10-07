@@ -15,6 +15,58 @@ import {
   type MissionHubStore,
 } from '../db/store.js';
 
+const runPurposeSchema = z.enum([
+  'research',
+  'implementation',
+  'runtime_verification',
+  'independent_review',
+  'incident_analysis',
+  'maintenance',
+  'migration',
+  'benchmark',
+  'other',
+]);
+
+const summaryTypeSchema = z.enum([
+  'agent_self_report',
+  'research_report',
+  'reviewer_validated',
+  'operator_note',
+]);
+
+const summaryMetadataSchema = z
+  .object({
+    schemaVersion: z.string().min(1).optional(),
+    validatesSummaryId: z.number().int().positive().optional(),
+    supersedesSummaryId: z.number().int().positive().optional(),
+  })
+  .passthrough();
+
+const evidenceSourceTypeSchema = z.enum([
+  'observed_runtime',
+  'real_data',
+  'code_config',
+  'internal_doc',
+  'external_primary',
+  'external_community',
+  'inference',
+]);
+
+const evidenceMetadataSchema = z
+  .object({
+    source_type: evidenceSourceTypeSchema.optional(),
+    authority: z.string().min(1).optional(),
+    observed_at: z.string().min(1).optional(),
+    retrieved_at: z.string().min(1).optional(),
+    version: z.string().min(1).optional(),
+    supports: z.string().min(1).optional(),
+    confidence: z.union([z.string().min(1), z.number().min(0).max(1)]).optional(),
+    freshness: z.string().min(1).optional(),
+    immutable: z.boolean().optional(),
+    ref_type: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 function toolResult(value: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -474,6 +526,7 @@ export function buildMcpServer(
         correlationId: z.string().nullable().optional(),
         provider: z.string().nullable().optional(),
         model: z.string().nullable().optional(),
+        purpose: runPurposeSchema.nullable().optional(),
       }),
     },
     async (input) =>
@@ -520,6 +573,30 @@ export function buildMcpServer(
   );
 
   server.registerTool(
+    'research.listReports',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['research.listReports'],
+      inputSchema: z.object({ missionId: z.number().int().positive() }),
+    },
+    async ({ missionId }) =>
+      requireScopes(principal, ['runs:read', 'summaries:read'])
+        ? toolResult(await store.listResearchReportsForMission(missionId))
+        : forbidden(['runs:read', 'summaries:read']),
+  );
+
+  server.registerTool(
+    'research.getCanonicalReport',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['research.getCanonicalReport'],
+      inputSchema: z.object({ missionId: z.number().int().positive() }),
+    },
+    async ({ missionId }) =>
+      requireScopes(principal, ['runs:read', 'summaries:read'])
+        ? toolResult(await store.getCanonicalResearchReport(missionId))
+        : forbidden(['runs:read', 'summaries:read']),
+  );
+
+  server.registerTool(
     'runs.listEvents',
     {
       description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.listEvents'],
@@ -537,17 +614,24 @@ export function buildMcpServer(
       description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.recordSummary'],
       inputSchema: z.object({
         runId: z.number().int().positive(),
-        type: z.enum(['agent_self_report', 'reviewer_validated', 'operator_note']),
+        type: summaryTypeSchema,
         content: z.string().min(1),
+        metadata: summaryMetadataSchema.nullable().optional(),
       }),
     },
-    async ({ runId, type, content }) => {
+    async ({ runId, type, content, metadata }) => {
       if (!requireScopes(principal, ['summaries:write'])) {
         return forbidden(['summaries:write']);
       }
       try {
         return toolResult(
-          await store.addSummary(runId, type, content, principal.clientId),
+          await store.addSummary(
+            runId,
+            type,
+            content,
+            principal.clientId,
+            metadata ?? null,
+          ),
         );
       } catch (error) {
         if (error instanceof ClaimFencedError) {
@@ -565,11 +649,14 @@ export function buildMcpServer(
     'runs.listSummaries',
     {
       description: CONTRACT_MCP_TOOL_DESCRIPTIONS['runs.listSummaries'],
-      inputSchema: z.object({ runId: z.number().int().positive() }),
+      inputSchema: z.object({
+        runId: z.number().int().positive(),
+        type: summaryTypeSchema.optional(),
+      }),
     },
-    async ({ runId }) =>
+    async ({ runId, type }) =>
       requireScopes(principal, ['summaries:read'])
-        ? toolResult(await store.listSummaries(runId))
+        ? toolResult(await store.listSummaries(runId, type))
         : forbidden(['summaries:read']),
   );
 
@@ -582,7 +669,7 @@ export function buildMcpServer(
         kind: z.string().min(1),
         label: z.string().min(1),
         uri: z.string().min(1),
-        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+        metadata: evidenceMetadataSchema.nullable().optional(),
       }),
     },
     async ({ runId, kind, label, uri, metadata }) => {

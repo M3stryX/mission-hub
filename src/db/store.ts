@@ -370,6 +370,7 @@ export interface CreateRunInput {
   correlationId?: string | null;
   provider?: string | null;
   model?: string | null;
+  purpose?: string | null;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -540,8 +541,8 @@ export class MissionHubStore {
       const result = await client.query<RunRow>(
         `INSERT INTO execution_runs(
           mission_id, session_id, client_id, runtime, agent, external_run_id,
-          correlation_id, provider, model, metadata_json
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+          correlation_id, provider, model, purpose, metadata_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::run_purpose,$11::jsonb)
         RETURNING *`,
         [
           input.missionId,
@@ -553,6 +554,7 @@ export class MissionHubStore {
           input.correlationId ?? null,
           input.provider ?? null,
           input.model ?? null,
+          input.purpose ?? null,
           JSON.stringify(input.metadata ?? null),
         ],
       );
@@ -632,6 +634,7 @@ export class MissionHubStore {
     type: string,
     content: string,
     principal: string,
+    metadata: Record<string, unknown> | null = null,
   ): Promise<SummaryRow> {
     return this.transaction(async (client) => {
       const current = await client.query<RunRow>(
@@ -645,10 +648,10 @@ export class MissionHubStore {
       await assertRunMutationAllowed(client, run, principal);
 
       const result = await client.query<SummaryRow>(
-        `INSERT INTO summaries(run_id, type, content, actor, client_id)
-         VALUES ($1,$2::summary_type,$3,$4,$4)
+        `INSERT INTO summaries(run_id, type, content, metadata_json, actor, client_id)
+         VALUES ($1,$2::summary_type,$3,$4::jsonb,$5,$5)
          RETURNING *`,
-        [runId, type, content, principal],
+        [runId, type, content, JSON.stringify(metadata), principal],
       );
       const summary = result.rows[0];
       await client.query(
@@ -664,10 +667,12 @@ export class MissionHubStore {
     });
   }
 
-  async listSummaries(runId: number): Promise<SummaryRow[]> {
+  async listSummaries(runId: number, type?: string): Promise<SummaryRow[]> {
     const result = await this.pool.query<SummaryRow>(
-      'SELECT * FROM summaries WHERE run_id = $1 ORDER BY created_at, id',
-      [runId],
+      type
+        ? 'SELECT * FROM summaries WHERE run_id = $1 AND type = $2 ORDER BY created_at, id'
+        : 'SELECT * FROM summaries WHERE run_id = $1 ORDER BY created_at, id',
+      type ? [runId, type] : [runId],
     );
     return result.rows;
   }
@@ -677,7 +682,7 @@ export class MissionHubStore {
     kind: string,
     label: string,
     uri: string,
-    metadata: Record<string, unknown> | null,
+    metadata: Record<string, unknown> | null = null,
     actor: string,
   ): Promise<EvidenceRow> {
     return this.transaction(async (client) => {
@@ -731,6 +736,42 @@ export class MissionHubStore {
       [missionId],
     );
     return result.rows;
+  }
+
+  async listResearchReportsForMission(missionId: number): Promise<Array<SummaryRow & {
+    mission_id: number;
+    purpose: string | null;
+    run_status: string;
+    review_state: string;
+    canonical: boolean;
+  }>> {
+    const result = await this.pool.query<SummaryRow & {
+      mission_id: number;
+      purpose: string | null;
+      run_status: string;
+      review_state: string;
+      canonical: boolean;
+    }>(
+      `SELECT s.*,
+              r.mission_id,
+              r.purpose,
+              r.status AS run_status,
+              r.review_state,
+              (row_number() OVER (ORDER BY s.created_at DESC, s.id DESC) = 1) AS canonical
+       FROM summaries s
+       JOIN execution_runs r ON r.id = s.run_id
+       WHERE r.mission_id = $1
+         AND r.purpose = 'research'::run_purpose
+         AND s.type = 'research_report'::summary_type
+       ORDER BY s.created_at DESC, s.id DESC`,
+      [missionId],
+    );
+    return result.rows;
+  }
+
+  async getCanonicalResearchReport(missionId: number) {
+    const reports = await this.listResearchReportsForMission(missionId);
+    return reports[0] ?? null;
   }
 
   async addChecklistItem(
