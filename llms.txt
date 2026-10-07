@@ -1,0 +1,17 @@
+# mission-hub
+
+> Standalone service for execution tracing and mission management.
+
+## Root
+
+- [AGENTS.md](./AGENTS.md): Agent guide — Mission Hub
+- [README.md](./README.md): Mission Hub
+
+## Docs
+
+- [docs/AGENT_USAGE.md](./docs/AGENT_USAGE.md): Mission Hub — Agent Usage Contract
+- [docs/migration.md](./docs/migration.md): Legacy Piblox Missions migration
+
+## Optional
+
+- [README.md](README.md): repository overview
