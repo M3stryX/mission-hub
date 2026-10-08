@@ -56,6 +56,15 @@ research → architecture (Jev gate) → plan (mandatory human approval) → exe
 
 Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (v1.2, authoritative over skills).
 
+## Autonomous Agent Workflows
+
+Mission Hub ships a runtime-agnostic [Autonomous Agent Kit](docs/AUTONOMOUS_AGENTS.md) for agents that drive missions end-to-end: discover → claim → work → verify → release → writeback → resume.
+
+- **Proven:** the read-only loop (list → get → checklist/sources/events → runs/summaries/evidence) ran end-to-end on a live instance.
+- **Not proven:** no enforced approval gate at v1.2 (plan approval is recorded, not enforced), no scheduler-recovery evidence, and no native autonomy loop in the mainstream CLIs (Claude Code, Codex, OpenCode are one-shot; an external driver is required).
+- Kit: [behaviour reference](docs/AUTONOMOUS_AGENTS.md) · [agent roles](docs/AGENT_ROLES.md) · [bootstrap prompt](docs/BOOTSTRAP_PROMPT.md) · [runtime adapters](docs/RUNTIME_ADAPTERS.md)
+- Non-goals: mission close/merge/delete/reprioritize are never autonomous; destructive and production actions need explicit human authorization.
+
 ## Architecture
 
 ```text
