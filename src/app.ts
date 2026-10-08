@@ -23,6 +23,8 @@ import {
   ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
   MAX_CLAIM_LEASE_SECONDS,
+  PlanNotOpenError,
+  SelfApprovalError,
   VERIFY_FIXTURE_TAG,
   VerifyFixtureRejectedError,
   type MissionHubStore,
@@ -62,6 +64,9 @@ const runPurpose = z.enum([
   'migration',
   'benchmark',
   'other',
+  'architecture',
+  'planning',
+  'jev_gate',
 ]);
 
 const createRunSchema = z.object({
@@ -119,6 +124,9 @@ const summaryType = z.enum([
   'research_report',
   'reviewer_validated',
   'operator_note',
+  'plan_summary',
+  'plan_approval',
+  'jev_decision',
 ]);
 
 const summaryMetadataSchema = z
@@ -131,6 +139,11 @@ const summaryMetadataSchema = z
 
 const summarySchema = z.object({
   type: summaryType,
+  content: z.string().min(1),
+  metadata: summaryMetadataSchema.nullable().optional(),
+});
+
+const planApprovalSchema = z.object({
   content: z.string().min(1),
   metadata: summaryMetadataSchema.nullable().optional(),
 });
@@ -710,6 +723,67 @@ export function createApp(
     return c.json({
       report: await store.getCanonicalResearchReport(missionId),
     });
+  });
+
+  app.get('/api/v1/missions/:id/jev-evaluations', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:read',
+      'summaries:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    const checkpoint = c.req.query('checkpoint') || undefined;
+    return c.json({
+      evaluations: await store.listJevEvaluationsForMission(
+        missionId,
+        checkpoint,
+      ),
+    });
+  });
+
+  app.get('/api/v1/jev-gate', async (c) => {
+    const principal = await principalFor(c.req.header('authorization'), [
+      'runs:read',
+      'summaries:read',
+    ]);
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    return c.json({ evaluations: await store.listJevEvaluations() });
+  });
+
+  app.post('/api/v1/missions/:id/plan-approval', async (c) => {
+    const principal = await resolvePrincipal(
+      c.req.header('authorization'),
+      store,
+      authOptions,
+    );
+    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!principal.scopes.has('approvals:human')) {
+      return c.json({ error: 'forbidden', required: ['approvals:human'] }, 403);
+    }
+    const missionId = parseId(c.req.param('id'));
+    if (!missionId) return c.json({ error: 'invalid_id' }, 400);
+    const parsed = planApprovalSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    try {
+      const summary = await store.recordPlanApproval(
+        missionId,
+        parsed.data.content,
+        principal.clientId,
+        parsed.data.metadata ?? null,
+      );
+      return summary
+        ? c.json({ summary }, 201)
+        : c.json({ error: 'not_found' }, 404);
+    } catch (error) {
+      if (error instanceof PlanNotOpenError) {
+        return c.json({ error: 'plan_not_open', missionId }, 401);
+      }
+      if (error instanceof SelfApprovalError) {
+        return c.json({ error: 'self_approval', missionId }, 409);
+      }
+      throw error;
+    }
   });
 
   app.post('/api/v1/runs', async (c) => {

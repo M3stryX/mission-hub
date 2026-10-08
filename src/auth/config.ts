@@ -10,7 +10,8 @@ export type Scope =
   | 'evidence:read'
   | 'evidence:write'
   | 'clients:admin'
-  | 'verify:admin';
+  | 'verify:admin'
+  | 'approvals:human';
 
 /**
  * Scopes usable by seeded service clients (env JSON / DB).
@@ -26,10 +27,14 @@ export const ALL_SERVICE_SCOPES: readonly Scope[] = [
   'evidence:read',
   'evidence:write',
   'verify:admin',
+  'approvals:human',
 ];
 
 /** Scopes that may only come from the admin mint token principal. */
-export const PRIVILEGED_SCOPES: readonly Scope[] = ['clients:admin'];
+export const PRIVILEGED_SCOPES: readonly Scope[] = [
+  'clients:admin',
+  'approvals:human',
+];
 
 /**
  * Scopes that must never be granted via POST /admin/clients mint.
@@ -38,6 +43,7 @@ export const PRIVILEGED_SCOPES: readonly Scope[] = ['clients:admin'];
 export const MINT_FORBIDDEN_SCOPES: readonly Scope[] = [
   'clients:admin',
   'verify:admin',
+  'approvals:human',
 ];
 
 export interface ClientCredential {
