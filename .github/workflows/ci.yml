@@ -43,6 +43,9 @@ jobs:
       - name: TypeCheck
         run: pnpm typecheck
 
+      - name: Docs links
+        run: pnpm docs:links
+
       - name: Migrate ephemeral PostgreSQL (fresh)
         run: pnpm db:migrate
 

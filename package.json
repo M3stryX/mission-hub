@@ -15,6 +15,7 @@
     "lint": "eslint src scripts tests",
     "test": "vitest run",
     "test:contract-inventory": "vitest run tests/contract-inventory.test.ts",
+    "docs:links": "tsx scripts/check-doc-links.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "clients": "tsx scripts/clients.ts",
     "legacy:export": "python3 scripts/export-legacy-sqlite.py",
