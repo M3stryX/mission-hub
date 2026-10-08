@@ -1,8 +1,11 @@
 {
   "name": "mission-hub",
-  "version": "0.1.0",
-  "description": "Mission Hub - Standalone mission and execution trace service",
+  "version": "1.2.0",
+  "description": "Standalone mission and execution-trace service for agent workflows (REST + MCP)",
   "private": true,
+  "license": "MIT",
+  "author": "M3stryX",
+  "repository": "M3stryX/mission-hub",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

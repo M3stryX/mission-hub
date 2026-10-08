@@ -1,0 +1,39 @@
+name: Configuration / setup help
+description: Ask for help configuring or deploying Mission Hub
+title: "[Config]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Need help with configuration or deployment? Please provide the details
+        below. **Do not paste secrets, tokens, `.env` values, or credentials** —
+        redact them before submitting.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to do, and where are you stuck?
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Deployment target (e.g. Dokploy, Docker, bare metal, Node version).
+    validations:
+      required: false
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Relevant configuration (redact secrets — describe variable names and values only).
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / errors
+      description: Relevant log lines or error output (redact any secrets).
+    validations:
+      required: false
