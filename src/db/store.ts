@@ -1153,14 +1153,6 @@ export class MissionHubStore {
     return result.rows[0] ?? null;
   }
 
-  async getClaim(claimId: number): Promise<ClaimRow | null> {
-    const result = await this.pool.query<ClaimRow>(
-      'SELECT * FROM mission_claims WHERE id = $1',
-      [claimId],
-    );
-    return result.rows[0] ?? null;
-  }
-
   /**
    * Atomically acquire a claim + execution run for a mission.
    * Expired open claims are released as `expired` then replaced.
