@@ -1,6 +1,6 @@
 {
   "name": "mission-hub",
-  "version": "1.2.0",
+  "version": "0.1.0",
   "description": "Standalone mission and execution-trace service for agent workflows (REST + MCP)",
   "private": true,
   "license": "MIT",
