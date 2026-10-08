@@ -79,10 +79,8 @@ src/
 ├── contract/
 │   └── inventory.ts    # Machine contract: enums, scopes, tables, routes, MCP tools
 ├── db/
-│   ├── schema.ts       # Drizzle schema (missions, runs, claims, summaries, evidence, …)
 │   ├── store.ts        # MissionHubStore — all persistence + claim/run transaction rules
-│   ├── migrate.ts      # Versioned SQL migration runner
-│   └── client.ts       # Postgres pool
+│   └── migrate.ts      # Versioned SQL migration runner
 └── mcp/
     └── server.ts       # MCP server `mission-hub` — 29 tools, REST-parity surface
 scripts/
