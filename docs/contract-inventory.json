@@ -167,7 +167,7 @@
     "missions.planApproval"
   ],
   "mcpToolDescriptions": {
-    "missions.list": "Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v1.",
+    "missions.list": "Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v1.2.",
     "missions.get": "Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.",
     "missions.create": "Create a durable mission (business state). Set status todo when actionable. Does not claim or create a run — call missions.claim when exclusive execution is required.",
     "missions.update": "Patch durable mission fields including business status (backlog…done/blocked). Never use status as an execution lock; use missions.claim / renew / release.",
@@ -180,7 +180,7 @@
     "missions.sources.remove": "Remove a source owned by the mission.",
     "missions.events.list": "List append-only mission audit events (includes claim.acquired/renewed/expired/released and expiry diagnosis).",
     "missions.claim.get": "Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.",
-    "missions.claim": "Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v1.",
+    "missions.claim": "Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v1.2.",
     "missions.claim.renew": "Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.",
     "missions.claim.release": "Release an owned claim. completed requires summary+evidence and terminalizes the run COMPLETED; failed|abandoned terminalizes FAILED. Couples claim and run in one transaction.",
     "runs.list": "List execution runs for a mission (newest first), optionally filtered by typed purpose. Legacy runs may have purpose=null.",
