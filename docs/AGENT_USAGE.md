@@ -120,6 +120,8 @@ CI fails on drift. Changing lifecycle semantics requires bumping this contract v
 
 Reusable skills (e.g. `mission-control`) may teach the workflow but **must not** fork semantics. If skill and this contract disagree, **this contract wins**.
 
+**Autonomous Agent Kit pointer.** The kit documents (`docs/AUTONOMOUS_AGENTS.md` and siblings) teach the autonomous workflow but defer to this contract for all semantics; if the kit and this contract disagree, **this contract wins**. The kit never restates contract rules — it links here.
+
 ## 12. Lifecycle stages
 
 `missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. It is **record/read only at v1.2** — nothing in REST or MCP transitions or enforces it yet.
