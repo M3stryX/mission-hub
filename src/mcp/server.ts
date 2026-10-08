@@ -12,6 +12,8 @@ import {
   ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
   MAX_CLAIM_LEASE_SECONDS,
+  PlanNotOpenError,
+  SelfApprovalError,
   type MissionHubStore,
 } from '../db/store.js';
 
@@ -63,6 +65,9 @@ const runPurposeSchema = z.enum([
   'migration',
   'benchmark',
   'other',
+  'architecture',
+  'planning',
+  'jev_gate',
 ]);
 
 const summaryTypeSchema = z.enum([
@@ -70,6 +75,9 @@ const summaryTypeSchema = z.enum([
   'research_report',
   'reviewer_validated',
   'operator_note',
+  'plan_summary',
+  'plan_approval',
+  'jev_decision',
 ]);
 
 const summaryMetadataSchema = z
@@ -713,6 +721,71 @@ export function buildMcpServer(
       requireScopes(principal, ['evidence:read'])
         ? toolResult(await store.listEvidence(runId))
         : forbidden(['evidence:read']),
+  );
+
+  server.registerTool(
+    'jev.listEvaluations',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['jev.listEvaluations'],
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        checkpoint: z.string().min(1).optional(),
+      }),
+    },
+    async ({ missionId, checkpoint }) =>
+      requireScopes(principal, ['runs:read', 'summaries:read'])
+        ? toolResult(
+            await store.listJevEvaluationsForMission(missionId, checkpoint),
+          )
+        : forbidden(['runs:read', 'summaries:read']),
+  );
+
+  server.registerTool(
+    'jev.getGateStatus',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['jev.getGateStatus'],
+      inputSchema: z.object({}),
+    },
+    async () =>
+      requireScopes(principal, ['runs:read', 'summaries:read'])
+        ? toolResult(await store.listJevEvaluations())
+        : forbidden(['runs:read', 'summaries:read']),
+  );
+
+  server.registerTool(
+    'missions.planApproval',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.planApproval'],
+      inputSchema: z.object({
+        missionId: z.number().int().positive(),
+        content: z.string().min(1),
+        metadata: summaryMetadataSchema.nullable().optional(),
+      }),
+    },
+    async ({ missionId, content, metadata }) => {
+      if (!requireScopes(principal, ['approvals:human'])) {
+        return forbidden(['approvals:human']);
+      }
+      try {
+        const summary = await store.recordPlanApproval(
+          missionId,
+          content,
+          principal.clientId,
+          metadata ?? null,
+        );
+        return summary
+          ? toolResult(summary)
+          : toolError('not_found', { missionId });
+      } catch (error) {
+        if (error instanceof PlanNotOpenError) {
+          return toolError('plan_not_open', { missionId });
+        }
+        if (error instanceof SelfApprovalError) {
+          return toolError('self_approval', { missionId });
+        }
+        throw error;
+      }
+    },
   );
 
   return server;

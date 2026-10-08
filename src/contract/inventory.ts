@@ -5,7 +5,7 @@
  */
 
 export const AGENT_USAGE_CONTRACT = {
-  version: 'v1.1',
+  version: 'v1.2',
   path: 'docs/AGENT_USAGE.md',
 } as const;
 
@@ -29,6 +29,9 @@ export const CONTRACT_ENUMS = {
     'migration',
     'benchmark',
     'other',
+    'architecture',
+    'planning',
+    'jev_gate',
   ],
   review_state: ['NONE', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'],
   summary_type: [
@@ -36,10 +39,14 @@ export const CONTRACT_ENUMS = {
     'reviewer_validated',
     'operator_note',
     'research_report',
+    'plan_summary',
+    'plan_approval',
+    'jev_decision',
   ],
   source_kind: ['doc', 'link'],
   session_status: ['OPEN', 'CLOSED', 'ABORTED'],
   claim_release_reason: ['completed', 'failed', 'abandoned', 'expired'],
+  mission_stage: ['research', 'architecture', 'plan', 'execution', 'done'],
 } as const;
 
 export const CONTRACT_SCOPES = [
@@ -53,6 +60,7 @@ export const CONTRACT_SCOPES = [
   'evidence:write',
   'clients:admin',
   'verify:admin',
+  'approvals:human',
 ] as const;
 
 export const CONTRACT_TABLES = [
@@ -96,6 +104,9 @@ export const CONTRACT_REST_ROUTES = [
   'GET /api/v1/missions/:id/runs',
   'GET /api/v1/missions/:id/research-reports',
   'GET /api/v1/missions/:id/research-report',
+  'GET /api/v1/missions/:id/jev-evaluations',
+  'POST /api/v1/missions/:id/plan-approval',
+  'GET /api/v1/jev-gate',
   'POST /api/v1/runs',
   'PATCH /api/v1/runs/:id/status',
   'GET /api/v1/runs/:id/events',
@@ -133,6 +144,9 @@ export const CONTRACT_MCP_TOOLS = [
   'runs.listSummaries',
   'runs.recordEvidence',
   'runs.listEvidence',
+  'jev.listEvaluations',
+  'jev.getGateStatus',
+  'missions.planApproval',
 ] as const;
 
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
@@ -172,7 +186,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'runs.list':
     'List execution runs for a mission (newest first), optionally filtered by typed purpose. Legacy runs may have purpose=null.',
   'runs.create':
-    'Create a run without claiming, optionally with typed purpose (research|implementation|runtime_verification|independent_review|incident_analysis|maintenance|migration|benchmark|other). Prefer missions.claim for exclusive work.',
+    'Create a run without claiming, optionally with typed purpose (research|implementation|runtime_verification|independent_review|incident_analysis|maintenance|migration|benchmark|other|architecture|planning|jev_gate). Prefer missions.claim for exclusive work.',
   'runs.updateStatus':
     'Update run status (PENDING|RUNNING|COMPLETED|FAILED). After claim expiry/reclaim, previous owners are fenced (claim_fenced). Prefer claim.release for terminalization on claimed work.',
   'research.listReports':
@@ -182,13 +196,19 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'runs.listEvents':
     'List execution events for a run (status changes, claim events, summaries, evidence).',
   'runs.recordSummary':
-    'Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note) with optional provenance metadata. Required before claim.release completed.',
+    'Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note|plan_summary|plan_approval|jev_decision) with optional provenance metadata. Required before claim.release completed.',
   'runs.listSummaries':
     'List summaries for a run, optionally filtered by summary type.',
   'runs.recordEvidence':
     'Append evidence (kind, label, uri, metadata). When research taxonomy is supplied, source_type must be one of observed_runtime|real_data|code_config|internal_doc|external_primary|external_community|inference.',
   'runs.listEvidence':
     'List evidence references for a run.',
+  'jev.listEvaluations':
+    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is v2.0. See docs/AGENT_USAGE.md v1.2.',
+  'jev.getGateStatus':
+    'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is v2.0.',
+  'missions.planApproval':
+    'Record a human plan approval (summary_type=plan_approval) for a mission. Requires the mint-forbidden approvals:human scope. Fails plan_not_open when the mission has no purpose=planning run, self_approval when the approver authored the plan_summary.',
 } as const satisfies Record<(typeof CONTRACT_MCP_TOOLS)[number], string>;
 
 export interface ContractInventory {
