@@ -5,7 +5,7 @@ compatibility matrix. Part of the runtime-agnostic Autonomous Agent Kit: the beh
 reference and policy live in [`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md), the role
 definitions in [`docs/AGENT_ROLES.md`](AGENT_ROLES.md), and the copy-paste bootstrap block in
 [`docs/BOOTSTRAP_PROMPT.md`](BOOTSTRAP_PROMPT.md). This document defers to
-[`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract v1.2) for all contract semantics.
+[`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract revision v1.2) for all contract semantics.
 
 **How this matrix was built.** Every non-Hermes cell was measured from the CLIs and config
 files of one Linux workstation (2026-10-08: Claude Code 2.1.114, Codex 0.160.1, OpenCode

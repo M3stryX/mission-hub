@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import pkg from '../../package.json' with { type: 'json' };
 import { hasScopes, type Principal, type Scope } from '../auth/config.js';
 import { CONTRACT_MCP_TOOL_DESCRIPTIONS } from '../contract/inventory.js';
 import {
@@ -119,7 +120,7 @@ export function buildMcpServer(
 ): McpServer {
   const server = new McpServer({
     name: 'mission-hub',
-    version: '0.1.0',
+    version: pkg.version,
   });
 
   server.registerTool(
