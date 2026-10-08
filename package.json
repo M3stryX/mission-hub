@@ -1,8 +1,11 @@
 {
   "name": "mission-hub",
   "version": "0.1.0",
-  "description": "Mission Hub - Standalone mission and execution trace service",
+  "description": "Standalone mission and execution-trace service for agent workflows (REST + MCP)",
   "private": true,
+  "license": "MIT",
+  "author": "M3stryX",
+  "repository": "M3stryX/mission-hub",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -12,6 +15,7 @@
     "lint": "eslint src scripts tests",
     "test": "vitest run",
     "test:contract-inventory": "vitest run tests/contract-inventory.test.ts",
+    "docs:links": "tsx scripts/check-doc-links.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "clients": "tsx scripts/clients.ts",
     "legacy:export": "python3 scripts/export-legacy-sqlite.py",
@@ -22,11 +26,8 @@
     "@modelcontextprotocol/hono": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "hono": "^4.9.0",
-    "drizzle-orm": "^0.33.0",
     "pg": "^8.16.0",
     "zod": "^4.1.0",
-    "pino": "^9.0.0",
-    "pino-pretty": "^11.0.0",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {

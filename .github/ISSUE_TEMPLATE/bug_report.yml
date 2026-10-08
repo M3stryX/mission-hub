@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a reproducible defect in Mission Hub
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the sections below.
+        **Do not paste secrets, tokens, `.env` values, or credentials** — redact them.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the defect.
+      placeholder: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Concrete steps to reproduce the behaviour.
+      placeholder: |
+        1. Start the server with ...
+        2. Call `POST /api/v1/...` with ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected to happen instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Commit hash or `main` checkout date where you saw the issue.
+      placeholder: e.g. 5d13c23 or "main as of 2026-10-08"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / trace
+      description: Relevant log lines or error output (redact any secrets).
+    validations:
+      required: false

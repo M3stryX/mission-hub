@@ -1,10 +1,12 @@
 # Mission Hub — Agent Usage Contract
 
-Contract-Version: v1.2  
+Contract-Version: v1.2 (contract revision)  
 Status: active  
 Applies-to: REST `/api/v1/*` and MCP server `mission-hub`  
 Skill pointer: personal/kit skill `mission-control` v3+ **must defer** to this document  
 Related: CLAIM-01 (#195), USAGE-01 (#196), `docs/contract-inventory.json`, `AGENTS.md`
+
+*Mission Hub 0.1.0 — contract revision 1.2.* The product version is `0.1.0`; `v1.2` is the agent contract/schema revision.
 
 English only. Bump `Contract-Version` and `agentUsage.version` in the contract inventory together.
 
@@ -45,7 +47,7 @@ Never use `mission.status = in_progress` as a substitute for a claim.
 
 ### Standalone runs
 
-`runs.create` is allowed without a claim (ad-hoc / verify fixtures). Prefer `missions.claim` when serialization matters — it already creates the run. Reuse `externalRunId` for idempotent retries (`UNIQUE(client_id, runtime, external_run_id)`). New runs may declare `purpose`: `research` | `implementation` | `runtime_verification` | `independent_review` | `incident_analysis` | `maintenance` | `migration` | `benchmark` | `other` | `architecture` (new in v1.2) | `planning` (new in v1.2) | `jev_gate` (new in v1.2). Legacy runs keep `purpose = null`; do not infer durable truth during migration.
+`runs.create` is allowed without a claim (ad-hoc / verify fixtures). Prefer `missions.claim` when serialization matters — it already creates the run. Reuse `externalRunId` for idempotent retries (`UNIQUE(client_id, runtime, external_run_id)`). New runs may declare `purpose`: `research` | `implementation` | `runtime_verification` | `independent_review` | `incident_analysis` | `maintenance` | `migration` | `benchmark` | `other` | `architecture` (new in contract v1.2) | `planning` (new in contract v1.2) | `jev_gate` (new in contract v1.2). Legacy runs keep `purpose = null`; do not infer durable truth during migration.
 
 ### Expiry / reclaim / fencing
 
@@ -61,7 +63,7 @@ On reclaim of an expired claim, Hub:
 
 - **Checklist** — ordered gates; mutable.
 - **Sources** — unique `(mission, path)`; prefer docs/links over stuffing the body.
-- **Summaries** — `agent_self_report` | `research_report` | `reviewer_validated` | `operator_note` | `plan_summary` (new in v1.2) | `plan_approval` (new in v1.2) | `jev_decision` (new in v1.2). A `research_report` is a run-owned research artifact, not automatically validated truth. A `plan_summary` is the mission's execution plan artifact; a `plan_approval` is written only through the `approvals:human` endpoint (see §12). A `jev_decision` is the recorded Jev-gate evaluation (see §13). Optional summary metadata may link provenance with `validatesSummaryId` or `supersedesSummaryId`.
+- **Summaries** — `agent_self_report` | `research_report` | `reviewer_validated` | `operator_note` | `plan_summary` (new in contract v1.2) | `plan_approval` (new in contract v1.2) | `jev_decision` (new in contract v1.2). A `research_report` is a run-owned research artifact, not automatically validated truth. A `plan_summary` is the mission's execution plan artifact; a `plan_approval` is written only through the `approvals:human` endpoint (see §12). A `jev_decision` is the recorded Jev-gate evaluation (see §13). Optional summary metadata may link provenance with `validatesSummaryId` or `supersedesSummaryId`.
 - **Evidence** — `kind`, `label`, `uri`, optional `metadata`. Research-aware metadata may include `source_type` (`observed_runtime` | `real_data` | `code_config` | `internal_doc` | `external_primary` | `external_community` | `inference`), `authority`, `observed_at`, `retrieved_at`, `version`, `supports`, `confidence`, `freshness`, `immutable`, and `ref_type`. Unknown extra metadata remains allowed for backward compatibility; an invalid supplied `source_type` is rejected.
 - **Events** — append-only audit; do not fabricate manually.
 
@@ -92,7 +94,7 @@ Legacy records remain unclassified unless a later explicit migration classifies 
 
 Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidence:*`.  
 `clients:admin` = mint/revoke. `verify:admin` = staging-only fixture cleanup.  
-`approvals:human` (new in v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: only an env-issued credential (`MISSION_HUB_CLIENTS_JSON`) can carry it — clients resolved from `api_clients` drop privileged scopes at authentication.
+`approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: only an env-issued credential (`MISSION_HUB_CLIENTS_JSON`) can carry it — clients resolved from `api_clients` drop privileged scopes at authentication.
 
 ## 8. Hosts
 
@@ -120,27 +122,29 @@ CI fails on drift. Changing lifecycle semantics requires bumping this contract v
 
 Reusable skills (e.g. `mission-control`) may teach the workflow but **must not** fork semantics. If skill and this contract disagree, **this contract wins**.
 
+**Autonomous Agent Kit pointer.** The kit documents (`docs/AUTONOMOUS_AGENTS.md` and siblings) teach the autonomous workflow but defer to this contract for all semantics; if the kit and this contract disagree, **this contract wins**. The kit never restates contract rules — it links here.
+
 ## 12. Lifecycle stages
 
-`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. It is **record/read only at v1.2** — nothing in REST or MCP transitions or enforces it yet.
+`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. It is **record/read only at contract v1.2** — nothing in REST or MCP transitions or enforces it yet.
 
 | Stage | Run purpose | Artifact that proves the stage | Gate to the next stage (enforced in v2.0) |
 |-------|-------------|-------------------------------|-------------------------------------------|
 | `research` | `research` (existing) | canonical `research_report` + evidence | canonical research report exists |
-| `architecture` | `architecture` (new in v1.2) | `jev_decision` summary + Jev evidence on a `jev_gate` run | canonical `jev_decision` recorded; `human_necessary` → operator validation |
-| `plan` | `planning` (new in v1.2) | `plan_summary` + `plan_approval` | approval by a non-author human principal |
+| `architecture` | `architecture` (new in contract v1.2) | `jev_decision` summary + Jev evidence on a `jev_gate` run | canonical `jev_decision` recorded; `human_necessary` → operator validation |
+| `plan` | `planning` (new in contract v1.2) | `plan_summary` + `plan_approval` | approval by a non-author human principal |
 | `execution` | `implementation` (existing) | claim / release rules (existing) | existing claim/release semantics |
 | `done` | — | checklist complete + run `COMPLETED` | — |
 
-v1.2 limitations (OQ-7):
+contract v1.2 limitations (OQ-7):
 
 - No code path blocks a run, claim, or transition — the guards are v2.0 work.
 - `stage` is not part of the REST/MCP mission payload: mission readouts still return the v1.1 field set, so `stage` is currently readable via SQL only. Exposing it is a deliberate contract bump (v2.0).
 - `mission.status` (business state) stays authoritative and is never derived from `stage`.
 
-## 13. Jev gate (record/read only at v1.2)
+## 13. Jev gate (record/read only at contract v1.2)
 
-An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At v1.2 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is v2.0.
+An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v1.2 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is v2.0.
 
 | Surface | Endpoint / tool | Semantics |
 |---------|-----------------|-----------|
@@ -158,4 +162,4 @@ Plan-approval rules:
 - `409 self_approval` when the caller is the author of that mission's `plan_summary`.
 - `404` for an unknown mission id.
 
-Plan approval is only **recorded** at v1.2: neither REST nor MCP writes `missions.stage`.
+Plan approval is only **recorded** at contract v1.2: neither REST nor MCP writes `missions.stage`.
