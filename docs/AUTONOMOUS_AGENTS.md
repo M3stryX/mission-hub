@@ -1,6 +1,6 @@
 # Autonomous Agent Workflows — Architecture and Policy
 
-Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL + MCP). This document is the behaviour reference and policy core for autonomous agent workflows against it. It is part of the runtime-agnostic Autonomous Agent Kit; the getting-started guide, role definitions, bootstrap prompt, and runtime adapters live in the sibling kit documents.
+Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL + MCP). This document is the behaviour reference and policy core for autonomous agent workflows against it. It is part of the runtime-agnostic Autonomous Agent Kit; the getting-started guide is §5–§6 of this document, and the role definitions, bootstrap prompt, and runtime adapters live in the sibling kit documents.
 
 **Authority.** Mission Hub state is the single source of truth. [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract v1.2) is the contract source of truth; this guide defers to it and never restates contract semantics — where the two disagree, the contract wins. [DOCUMENTED — AGENT_USAGE.md §3, §11]
 
@@ -81,6 +81,93 @@ Notes:
 2. **Run completion is not mission business status.** A `COMPLETED` run (and a claim released `completed`) says the execution unit finished; the mission's durable goal state (`mission.status`) is a separate human-facing signal. [DOCUMENTED — AGENT_USAGE.md §2; OBSERVED — PROOF D: run `COMPLETED` while the mission stayed `done`]
 3. **Every `completed` release carries ≥1 summary + ≥1 evidence**; the Hub refuses the release otherwise (`claim_release_incomplete`). [OBSERVED — PROOF D]
 4. **Research reports are run-owned artifacts**, canonicalized by recency (`research.getCanonicalReport` returns the newest `research_report` on a `purpose = research` run); older reports stay visible and supersession is provenance, not deletion. [IMPLEMENTED — research tools in the inventory; DOCUMENTED — AGENT_USAGE.md §6]
+
+## 5. Getting started
+
+### Connect (MCP)
+
+The MCP server `mission-hub` is served at the streamable-HTTP endpoint `/mcp` — one endpoint, all 29 tools. Authenticate with a Bearer token held in an environment variable, never inline in prompts or commits:
+
+```bash
+curl -N http://<HOST>:3000/mcp \
+  -H "Authorization: Bearer $MISSION_HUB_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"my-agent","version":"1.0"}}}'
+```
+
+The dual `Accept` header is required — streamable HTTP rejects a request that does not advertise both `application/json` and `text/event-stream` (see §6). The token is an env-issued client credential: the server loads clients from `MISSION_HUB_CLIENTS_JSON`; the client side holds the matching token in its own environment. [IMPLEMENTED — `src/app.ts` `/mcp`; `src/auth/config.ts`]
+
+### Capabilities checklist
+
+Confirm the surfaces before planning work. Counts come from the machine inventory, never prose:
+
+| Surface | Count | Source of truth |
+|---------|-------|-----------------|
+| MCP tools | **29** | `registerTool(` in `src/mcp/server.ts` |
+| HTTP routes | **36** | `src/app.ts` — 33 REST under `/api/v1`, plus `/health`, `/ready`, `/mcp` |
+| Scopes | **11** | `src/auth/config.ts` |
+| Run purposes | **12** | `docs/contract-inventory.json` |
+| Summary types | **7** | `docs/contract-inventory.json` |
+| Evidence source types | **7** | `docs/contract-inventory.json` |
+
+[IMPLEMENTED — `docs/contract-inventory.json`]
+
+### Minimal authorization policy
+
+Request only the scopes the task needs. The 11 scopes, grouped:
+
+- **Read** — `missions:read`, `runs:read`, `summaries:read`, `evidence:read`
+- **Write** — `missions:write`, `runs:write`, `summaries:write`, `evidence:write`
+- **Privileged / human-only** — `clients:admin` (mint/revoke), `verify:admin` (staging-only destructive verify), `approvals:human` (record plan approvals)
+
+`clients:admin`, `verify:admin`, and `approvals:human` are mint-forbidden through the admin API; treat any action that needs them as human-only. The Hub enforces scope-level authorization only — the write allowlist is operator configuration held by the agent's runtime (§3). [DOCUMENTED — AGENT_USAGE.md §7; IMPLEMENTED — `src/auth/config.ts`]
+
+### Bootstrap
+
+Copy [`docs/BOOTSTRAP_PROMPT.md`](BOOTSTRAP_PROMPT.md) into the agent's first turn. It is runtime-neutral: it fixes the role, the loop rules, the evidence rule, and the stop conditions, and it carries no host, token, or mission id.
+
+### Read-only pilot recipe
+
+Prove the connection and the read path before any write:
+
+1. `missions.list` — the Hub is reachable and the token resolves.
+2. `missions.get` + `missions.checklist.list` + `missions.sources.list` + `missions.events.list` — one mission read end-to-end.
+3. `runs.list` + `runs.listSummaries` + `runs.listEvidence` — the execution-trace graph.
+4. Stop. No claim, no write.
+
+A read-only pilot is auto-executable by default (§3). [OBSERVED — PROOF D: read-only loop over 295 missions, checklist, sources, events, runs, summaries, evidence]
+
+### Scheduler / resume pattern
+
+Mission Hub has no always-on processor. A continuous loop needs an external driver (cron, n8n, a long-lived agent runtime) that:
+
+1. Calls `missions.list` on a schedule.
+2. Applies the eligibility table (§3) to each candidate.
+3. Claims the next eligible unit (`missions.claim`) and heartbeats the lease (`missions.claim.renew`) at an interval below the lease — default 300 s, max 3600 s.
+4. Records summary + evidence, then releases (`missions.claim.release`).
+5. On the next tick, rescans and resumes with the next eligible unit.
+
+If a run is missed, the claim expires and the Hub reclaims it (§2, expiry/reclaim/fencing); the driver's next tick re-discovers the unit. This pattern is documented, not proven — see §7.5. [DOCUMENTED — this guide; IMPLEMENTED — claim/lease in `src/db/store.ts`]
+
+### Verification
+
+Check work against observed evidence, never against the worker's self-report (§4). Independent review is a separate run — normally `purpose = independent_review` — and may write a `reviewer_validated` summary pointing at the validated report. Role definitions: [`docs/AGENT_ROLES.md`](AGENT_ROLES.md). [IMPLEMENTED — typed purpose/summary in the inventory; DOCUMENTED — AGENT_USAGE.md §6]
+
+## 6. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Not Acceptable` on `/mcp` | Missing dual `Accept` header | Send `Accept: application/json, text/event-stream` |
+| `403 forbidden [approvals:human]` | Expected — the scope is mint-forbidden and unreachable by any available credential | Plan approval is recorded by a human principal, not by the agent (§7.1) |
+| `claim_conflict` | Another claim is open on the mission | Wait for the other claim to release/expire, or pick another mission |
+| `claim_fenced` | This owner's lease expired and was reclaimed | Stop writing; re-claim if the unit is still eligible |
+| `claim_release_incomplete` | `completed` release without ≥1 summary + ≥1 evidence | Record `runs.recordSummary` + `runs.recordEvidence`, then release again |
+| `claim_already_released` | Renew/release on an already-released claim | Re-acquire with a fresh `missions.claim` |
+| Host-header rejection | The `/mcp` endpoint validates the `Host` header against an allowlist | Send the `Host` the server expects (its own host, not a proxy's) |
+| HTTP 200 with `isError: true` | Tool-level errors return 200 + `isError`, not 4xx | Read `content[0].text` for the `{ error, ... }` payload |
+
+Error payloads are JSON in `content[0].text` with an `error` code and context fields (e.g. `claim_conflict { missionId, claimId }`). [IMPLEMENTED — `src/mcp/server.ts`]
 
 ## 7. Known limitations (v1.2)
 
