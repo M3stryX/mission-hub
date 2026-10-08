@@ -4,11 +4,11 @@ Standalone **mission + execution-trace** service (Hono + PostgreSQL + MCP).
 
 | | |
 |---|---|
-| GitHub | [PibloxHQ/mission-hub](https://github.com/PibloxHQ/mission-hub) |
+| GitHub | [M3stryX/mission-hub](https://github.com/M3stryX/mission-hub) |
 | Prod | `mission-hub.lan` (Dokploy app `mission-hub`, branch `main`) |
 | Staging | `mission-hub-staging.lan` (Dokploy app `mission-hub-staging`, branch `staging`) |
 | Auth | Option A — hashed API clients in Postgres (`clients:admin` mint/revoke) |
-| Agent contract | [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) **v1** (authoritative over skills) |
+| Agent contract | [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) **v1.2** (authoritative over skills) |
 
 ## Non-goals (do not reopen without explicit operator ask)
 
@@ -31,12 +31,12 @@ Standalone **mission + execution-trace** service (Hono + PostgreSQL + MCP).
 ## Git workflow
 
 ```text
-feature/*  →  staging  →  main
+feature/*  →  dev  →  staging  →  main
 ```
 
 - Never commit or push straight to `main`.
-- Feature PRs target **`staging`**.
-- Promote `staging` → `main` only after staging verify (and explicit operator OK for prod).
+- Feature PRs target **`dev`**.
+- Promote `dev` → `staging` → `main` only after verification at each step (and explicit operator OK for prod).
 - Conventional commits (`feat:`, `fix:`, `docs:`, …). English only in repo artifacts.
 - Do not use `--no-verify` / `--force` on protected branches without explicit human agreement.
 
@@ -71,7 +71,7 @@ Summarize for the human: commands run, pass/fail, and any migration or contract-
 | `pnpm clients` | Admin client mint/list helpers |
 | `pnpm test:contract-inventory` | Inventory drift check |
 
-CI (`.github/workflows/ci.yml`): lint, typecheck, migrate (fresh + idempotent), legacy fixture import, test, build, Docker build. Triggers on PRs to `staging`/`main` and pushes to `feature/**`.
+CI (`.github/workflows/ci.yml`): lint, typecheck, migrate (fresh + idempotent), legacy fixture import, test, build, Docker build. Triggers on PRs to `dev`/`staging`/`main` and pushes to `dev`/`feature/**`.
 
 ## Language policy
 
