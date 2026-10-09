@@ -20,7 +20,7 @@ describe('contract inventory drift gate', () => {
   });
 
   it('keeps auth scope exports aligned with inventory scopes', () => {
-    // approvals:human is exported by both auth groups per the v1.2 plan
+    // approvals:human is exported by both auth groups per the scope plan
     // (ALL_SERVICE_SCOPES + PRIVILEGED_SCOPES); the inventory lists each
     // scope once, so de-duplicate before comparing.
     const fromCode = [

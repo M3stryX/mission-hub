@@ -13,9 +13,9 @@ Standalone **mission + execution-trace** service for agent workflows. Mission Hu
 |---------|-------|-----------------|
 | MCP tools | **29** | `registerTool(` in `src/mcp/server.ts` |
 | HTTP routes | **36** | `app.get\|post\|patch\|delete\|put\|all(` in `src/app.ts` (33 REST under `/api/v1`, plus `/health`, `/ready` and the `/mcp` endpoint) |
-| Agent contract | **v1.2** (contract revision) | `docs/AGENT_USAGE.md` (`Contract-Version: v1.2`) |
+| Agent contract | **v2.0** (contract revision) | `docs/AGENT_USAGE.md` (`Contract-Version: v2.0`) |
 
-*Mission Hub 0.1.0 — contract revision 1.2.* The product version is `0.1.0`; `v1.2` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision 2.0.* The product version is `0.1.0`; `v2.0` is the agent contract/schema revision.
 
 REST ↔ MCP parity is enforced: every agent-facing read/write exists on both surfaces unless documented otherwise. The machine inventory (`src/contract/inventory.ts` → `docs/contract-inventory.json`) tracks enums, scopes, tables, routes and MCP tools; `pnpm test:contract-inventory` (and CI) fail on drift.
 
@@ -44,7 +44,7 @@ Migrations also run automatically on boot. Admin clients are minted with `pnpm c
 
 ## Mission lifecycle
 
-Missions move through a 5-stage lifecycle (`missions.stage`, record/read only at contract v1.2 — gate enforcement is v2.0):
+Missions move through a 5-stage lifecycle (`missions.stage`, exposed in the mission payload at contract v2.0 — gate enforcement is still to come):
 
 ```text
 research → architecture (Jev gate) → plan (mandatory human approval) → execution → done
@@ -56,7 +56,7 @@ research → architecture (Jev gate) → plan (mandatory human approval) → exe
 4. **Execution** — exclusive work runs under a claim: `missions.claim` (atomic session + run + claim) → heartbeat with `missions.claim.renew` → report with `runs.recordSummary` + `runs.recordEvidence` → `missions.claim.release` (`completed` requires summary + evidence and terminalizes the run `COMPLETED`; `failed`/`abandoned` terminalize `FAILED`).
 5. **Done** — checklist complete and run `COMPLETED`; business status closed with `missions.update` → `done`.
 
-Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v1.2, authoritative over skills).
+Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v2.0, authoritative over skills).
 
 ## Autonomous Agent Workflows
 
@@ -132,12 +132,12 @@ pnpm test:contract-inventory
 - Using `mission.status` as a lock or lease (use claims).
 - Vector search (deferred — Postgres full-text `simple` configuration only).
 - External authentication (deferred — hashed API clients + admin Bearer today).
-- Jev gate enforcement and stage transitions (v2.0 — contract v1.2 records/serves only).
+- Jev gate enforcement and stage-transition guards (still to come — contract v2.0 exposes `stage` read/write but does not enforce transitions).
 - Putting secrets, tokens or passwords in chat, commits or memory.
 
 ## Docs & license
 
-- Agent contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v1.2)
+- Agent contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v2.0)
 - Machine inventory: [`docs/contract-inventory.json`](docs/contract-inventory.json)
 - Legacy migration: [`docs/migration.md`](docs/migration.md)
 - Agent guide: [`AGENTS.md`](AGENTS.md)

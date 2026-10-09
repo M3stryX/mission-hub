@@ -40,10 +40,19 @@ const missionStatus = z.enum([
   'blocked',
 ]);
 
+const missionStage = z.enum([
+  'research',
+  'architecture',
+  'plan',
+  'execution',
+  'done',
+]);
+
 const createMissionSchema = z.object({
   title: z.string().min(1),
   body: z.string().nullable().optional(),
   status: missionStatus.optional(),
+  stage: missionStage.optional(),
   priority: z.number().int().min(1).max(5).optional(),
   dueAt: z.string().nullable().optional(),
   source: z.string().nullable().optional(),

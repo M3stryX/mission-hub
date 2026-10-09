@@ -81,6 +81,14 @@ const summaryTypeSchema = z.enum([
   'jev_decision',
 ]);
 
+const missionStageSchema = z.enum([
+  'research',
+  'architecture',
+  'plan',
+  'execution',
+  'done',
+]);
+
 const summaryMetadataSchema = z
   .object({
     schemaVersion: z.string().min(1).optional(),
@@ -155,6 +163,7 @@ export function buildMcpServer(
         title: z.string().min(1),
         body: z.string().nullable().optional(),
         status: z.string().optional(),
+        stage: missionStageSchema.optional(),
         priority: z.number().int().min(1).max(5).optional(),
         parentId: z.number().int().positive().nullable().optional(),
         tags: z.string().nullable().optional(),
@@ -175,6 +184,7 @@ export function buildMcpServer(
         title: z.string().min(1).optional(),
         body: z.string().nullable().optional(),
         status: z.string().optional(),
+        stage: missionStageSchema.optional(),
         priority: z.number().int().min(1).max(5).optional(),
         parentId: z.number().int().positive().nullable().optional(),
         tags: z.string().nullable().optional(),

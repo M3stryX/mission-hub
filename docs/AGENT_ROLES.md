@@ -1,6 +1,6 @@
 # Agent Roles
 
-Runtime-neutral role definitions for autonomous agent workflows against Mission Hub. A role is a set of duties and prohibitions, not a credential — any runtime can play any role, and the credential's scopes decide what the role may actually write. The contract ([`docs/AGENT_USAGE.md`](AGENT_USAGE.md), contract revision v1.2) owns all semantics and the behaviour reference ([`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md)) owns the policy; if this file disagrees with either, they win.
+Runtime-neutral role definitions for autonomous agent workflows against Mission Hub. A role is a set of duties and prohibitions, not a credential — any runtime can play any role, and the credential's scopes decide what the role may actually write. The contract ([`docs/AGENT_USAGE.md`](AGENT_USAGE.md), contract revision v2.0) owns all semantics and the behaviour reference ([`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md)) owns the policy; if this file disagrees with either, they win.
 
 ## Mission Supervisor
 
