@@ -5,7 +5,7 @@
  */
 
 export const AGENT_USAGE_CONTRACT = {
-  version: 'v1.2',
+  version: 'v2.0',
   path: 'docs/AGENT_USAGE.md',
 } as const;
 
@@ -152,13 +152,13 @@ export const CONTRACT_MCP_TOOLS = [
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
 export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.list':
-    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v1.2.',
+    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v2.0.',
   'missions.get':
     'Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.',
   'missions.create':
     'Create a durable mission (business state). Set status todo when actionable. Does not claim or create a run — call missions.claim when exclusive execution is required.',
   'missions.update':
-    'Patch durable mission fields including business status (backlog…done/blocked). Never use status as an execution lock; use missions.claim / renew / release.',
+    'Patch durable mission fields including business status (backlog…done/blocked) and lifecycle stage (research|architecture|plan|execution|done). Never use status as an execution lock; use missions.claim / renew / release.',
   'missions.checklist.list':
     'List ordered checklist gates for a mission (progress decomposition).',
   'missions.checklist.add':
@@ -178,7 +178,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.claim.get':
     'Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.',
   'missions.claim':
-    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v1.2.',
+    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v2.0.',
   'missions.claim.renew':
     'Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.',
   'missions.claim.release':
@@ -204,7 +204,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'runs.listEvidence':
     'List evidence references for a run.',
   'jev.listEvaluations':
-    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is v2.0. See docs/AGENT_USAGE.md v1.2.',
+    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is v2.0. See docs/AGENT_USAGE.md v2.0.',
   'jev.getGateStatus':
     'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is v2.0.',
   'missions.planApproval':

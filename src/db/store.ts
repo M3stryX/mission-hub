@@ -11,6 +11,7 @@ export interface MissionRow extends QueryResultRow {
   title: string;
   body: string | null;
   status: string;
+  stage: string;
   priority: number;
   due_at: string | null;
   source: string | null;
@@ -364,6 +365,7 @@ export interface CreateMissionInput {
   title: string;
   body?: string | null;
   status?: string;
+  stage?: string;
   priority?: number;
   dueAt?: string | null;
   source?: string | null;
@@ -376,6 +378,7 @@ export interface UpdateMissionInput {
   title?: string;
   body?: string | null;
   status?: string;
+  stage?: string;
   priority?: number;
   dueAt?: string | null;
   source?: string | null;
@@ -408,7 +411,7 @@ export class MissionHubStore {
   async listMissions(query?: string): Promise<MissionRow[]> {
     if (query?.trim()) {
       const result = await this.pool.query<MissionRow>(
-        `SELECT id, title, body, status, priority, due_at, source, tags, recurrence,
+        `SELECT id, title, body, status, stage, priority, due_at, source, tags, recurrence,
                 parent_id, created_at, updated_at
          FROM missions
          WHERE search_vector @@ plainto_tsquery('simple', $1)
@@ -419,7 +422,7 @@ export class MissionHubStore {
     }
 
     const result = await this.pool.query<MissionRow>(
-      `SELECT id, title, body, status, priority, due_at, source, tags, recurrence,
+      `SELECT id, title, body, status, stage, priority, due_at, source, tags, recurrence,
               parent_id, created_at, updated_at
        FROM missions
        ORDER BY priority ASC, updated_at DESC`,
@@ -429,7 +432,7 @@ export class MissionHubStore {
 
   async getMission(id: number): Promise<MissionRow | null> {
     const result = await this.pool.query<MissionRow>(
-      `SELECT id, title, body, status, priority, due_at, source, tags, recurrence,
+      `SELECT id, title, body, status, stage, priority, due_at, source, tags, recurrence,
               parent_id, created_at, updated_at
        FROM missions WHERE id = $1`,
       [id],
@@ -444,14 +447,15 @@ export class MissionHubStore {
     return this.transaction(async (client) => {
       const result = await client.query<MissionRow>(
         `INSERT INTO missions(
-          title, body, status, priority, due_at, source, tags, recurrence, parent_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        RETURNING id, title, body, status, priority, due_at, source, tags,
+          title, body, status, stage, priority, due_at, source, tags, recurrence, parent_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING id, title, body, status, stage, priority, due_at, source, tags,
                   recurrence, parent_id, created_at, updated_at`,
         [
           input.title,
           input.body ?? null,
           input.status ?? 'backlog',
+          input.stage ?? 'research',
           input.priority ?? 3,
           input.dueAt ?? null,
           input.source ?? null,
@@ -491,15 +495,16 @@ export class MissionHubStore {
          SET title = COALESCE($2, title),
              body = CASE WHEN $3::boolean THEN $4 ELSE body END,
              status = COALESCE($5::mission_status, status),
-             priority = COALESCE($6, priority),
-             due_at = CASE WHEN $7::boolean THEN $8 ELSE due_at END,
-             source = CASE WHEN $9::boolean THEN $10 ELSE source END,
-             tags = CASE WHEN $11::boolean THEN $12 ELSE tags END,
-             recurrence = CASE WHEN $13::boolean THEN $14 ELSE recurrence END,
-             parent_id = CASE WHEN $15::boolean THEN $16 ELSE parent_id END,
+             stage = COALESCE($6::mission_stage, stage),
+             priority = COALESCE($7, priority),
+             due_at = CASE WHEN $8::boolean THEN $9 ELSE due_at END,
+             source = CASE WHEN $10::boolean THEN $11 ELSE source END,
+             tags = CASE WHEN $12::boolean THEN $13 ELSE tags END,
+             recurrence = CASE WHEN $14::boolean THEN $15 ELSE recurrence END,
+             parent_id = CASE WHEN $16::boolean THEN $17 ELSE parent_id END,
              updated_at = now()
          WHERE id = $1
-         RETURNING id, title, body, status, priority, due_at, source, tags,
+         RETURNING id, title, body, status, stage, priority, due_at, source, tags,
                    recurrence, parent_id, created_at, updated_at`,
         [
           id,
@@ -507,6 +512,7 @@ export class MissionHubStore {
           Object.hasOwn(input, 'body'),
           input.body ?? null,
           input.status ?? null,
+          input.stage ?? null,
           input.priority ?? null,
           Object.hasOwn(input, 'dueAt'),
           input.dueAt ?? null,
