@@ -2,9 +2,9 @@
 
 Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL + MCP). This document is the behaviour reference and policy core for autonomous agent workflows against it. It is part of the runtime-agnostic Autonomous Agent Kit; the getting-started guide is §5–§6 of this document, and the role definitions, bootstrap prompt, and runtime adapters live in the sibling kit documents.
 
-**Authority.** Mission Hub state is the single source of truth. [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract revision v1.2) is the contract source of truth; this guide defers to it and never restates contract semantics — where the two disagree, the contract wins. [DOCUMENTED — AGENT_USAGE.md §3, §11]
+**Authority.** Mission Hub state is the single source of truth. [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract revision v2.0) is the contract source of truth; this guide defers to it and never restates contract semantics — where the two disagree, the contract wins. [DOCUMENTED — AGENT_USAGE.md §3, §11]
 
-*Mission Hub 0.1.0 — contract revision 1.2.* The product version is `0.1.0`; `v1.2` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision 2.0.* The product version is `0.1.0`; `v2.0` is the agent contract/schema revision.
 
 **Claim discipline.** Every capability claim below carries one status — **DOCUMENTED** (read in the contract or repo source), **IMPLEMENTED** (present in code and the machine inventory), **RUNTIME_WIRED** (reachable over MCP/REST), **TESTED** (exercised from a client runtime), or **OBSERVED** (executed end-to-end on a live instance) — with its evidence pointer:
 
@@ -14,7 +14,7 @@ Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL
 | [AUDIT B] | Runtime capability matrix, measured from local CLI help and configs (`t_78c7bbb6`) |
 | [AUDIT C] | Prior-art reuse inventory (`t_33655bee`) |
 | [PROOF D] | End-to-end read-only loop + negative tests on a live instance (`t_240eb13e`) |
-| [CONTRACT] | `docs/AGENT_USAGE.md` (contract revision v1.2) or `docs/contract-inventory.json` |
+| [CONTRACT] | `docs/AGENT_USAGE.md` (contract revision v2.0) or `docs/contract-inventory.json` |
 
 Counts in this guide (29 MCP tools, 36 REST routes, 11 scopes, 12 run purposes, 7 summary types, 7 evidence source types) are sourced from `docs/contract-inventory.json`, never from prose. [IMPLEMENTED — contract-inventory.json]
 
@@ -76,6 +76,27 @@ Notes:
 - The allowlist is operator configuration held by the agent's runtime, not a Hub feature; the Hub enforces only scope-level authorization. [DOCUMENTED — this guide]
 - `clients:admin`, `verify:admin`, and `approvals:human` are privileged or mint-forbidden scopes; treat any action needing them as human-only. [DOCUMENTED — AGENT_USAGE.md §7; AUDIT A]
 - Destructive verify (`verify:admin` + the allow-destructive-verify env flag) is staging-only and refused on production. [DOCUMENTED — AGENT_USAGE.md §8]
+
+### Stage → action mapping (normative)
+
+Any runtime can drive a mission from its stage: the stage names the unit to dispatch next. It is a dispatch input, never an authorization to write. The mapping:
+
+| Stage | Action | Assignee | Gate |
+|---|---|---|---|
+| `research` | reconnaissance / evidence-gathering card with the mission context attached | `researcher` | — |
+| `architecture` | architecture evaluation (the Jev gate) | `verifier` / Jev | human validation |
+| `plan` | implementation plan card, completion requires the operator's approval quoted | `builder` + `default` | **operator approval** |
+| `execution` | implementation cards + independent verification before any promotion | `builder` / `cursor` / `verifier` | verify gate |
+| `done` | closeout / writeback only — never an agent action | — | operator closes |
+
+Four rules keep the mapping safe:
+
+1. **The stage is record/read, not an enforced lock.** Like `mission.status` (§1.3), `missions.stage` records where the mission sits in its 5-stage lifecycle; no Hub code path blocks a run, claim, or stage change on it. [DOCUMENTED — AGENT_USAGE.md §12]
+2. **A stage change alone never authorizes a write.** Patching `stage` to `execution` does not make an implementation write eligible; the patch is a record update like any other.
+3. **The eligibility policy still governs every action.** The mapping chooses *which* unit to dispatch; the eligibility table above still classifies *whether* that unit's write is allowed, before any write happens.
+4. **A watcher's observe-only mode precedes activation.** A continuous driver (watcher, scheduler) runs observe-only first — it reads mission state and reports what it *would* dispatch — and dispatch behavior is activated only by a separate, explicit operator decision.
+
+Per-stage run purposes and proof artifacts stay the contract's to define: [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) §12.
 
 ## 4. Evidence and completion rule
 
@@ -171,14 +192,14 @@ Check work against observed evidence, never against the worker's self-report (§
 
 Error payloads are JSON in `content[0].text` with an `error` code and context fields (e.g. `claim_conflict { missionId, claimId }`). [IMPLEMENTED — `src/mcp/server.ts`]
 
-## 7. Known limitations (contract v1.2)
+## 7. Known limitations (contract v2.0)
 
-These are the honest gaps at contract v1.2. None of them is worked around in this guide.
+These are the honest gaps at contract v2.0. None of them is worked around in this guide.
 
 1. **Plan approval is recorded, not enforced — and currently unreachable.** The `approvals:human` scope is mint-forbidden and dropped from every available auth path, so no credential today can call `missions.planApproval` (observed: MCP `forbidden [approvals:human]`, REST 403). Plan approval is a recorded-intent surface, not an enforced gate. [OBSERVED — PROOF D; AUDIT A]
 2. **The summary surface is unguarded.** `runs.recordSummary` accepts `type = "plan_approval"` with only `summaries:write` — no `approvals:human`, no `plan_not_open`, no `self_approval` guard — so an agent can write a human-approval row through the summary surface. This contradicts the contract sentence "written only through the `approvals:human` endpoint" and is tracked as a separate fix mission. [OBSERVED — PROOF D]
-3. **No enforced stage gate at contract v1.2.** `missions.stage` (5-stage lifecycle) is record/read only; no code path blocks a run, claim, or transition on stage, and `stage` is not in the REST/MCP mission payload. [DOCUMENTED — AGENT_USAGE.md §12; AUDIT A]
-4. **Jev gate is record/read only.** `jev.listEvaluations` / `jev.getGateStatus` serve recorded `jev_decision` summaries; the gate itself is v2.0. [DOCUMENTED — AGENT_USAGE.md §13]
+3. **The stage is not an enforced gate, there is no stage-ordering enforcement, and the watcher is a consumer.** `missions.stage` (5-stage lifecycle) is exposed in the REST/MCP mission payload (read + write), but no code path blocks a run, claim, or transition on stage — stage-transition guards are still to come. The Hub also never refuses an out-of-order stage value: any of the five stages can be set at any time. The stage→action mapping (§3) is dispatch policy, not enforcement. A watcher (or any continuous driver) is a consumer of Hub state, not a second authority — it reads the Hub and reports what it would dispatch — so the Hub remains the single source of truth. [DOCUMENTED — AGENT_USAGE.md §12; AUDIT A]
+4. **Jev gate is record/read only.** `jev.listEvaluations` / `jev.getGateStatus` serve recorded `jev_decision` summaries; the gate itself is still to come. [DOCUMENTED — AGENT_USAGE.md §13]
 5. **Scheduler/resume after a missed run is untested.** The documented pattern (external driver + claim/lease) has no missed-run recovery evidence; do not assume always-on processing or automatic resume. [DOCUMENTED — AUDIT C; UNTESTED]
 6. **Run-level events are not in mission events.** `run.created`, `run.summary_recorded`, `claim.fenced`, etc. surface only via `runs.listEvents`; `missions.events.list` shows claim acquire/expire/release and mission updates only. [OBSERVED — PROOF D]
 7. **No native autonomy loop in the mainstream CLIs.** Claude Code, Codex, and OpenCode are one-shot headless runtimes; an external driver is required for a continuous loop. [DOCUMENTED — AUDIT B]

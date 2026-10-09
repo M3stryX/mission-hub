@@ -1,6 +1,6 @@
 # Agent Roles
 
-Runtime-neutral role definitions for autonomous agent workflows against Mission Hub. A role is a set of duties and prohibitions, not a credential — any runtime can play any role, and the credential's scopes decide what the role may actually write. The contract ([`docs/AGENT_USAGE.md`](AGENT_USAGE.md), contract revision v1.2) owns all semantics and the behaviour reference ([`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md)) owns the policy; if this file disagrees with either, they win.
+Runtime-neutral role definitions for autonomous agent workflows against Mission Hub. A role is a set of duties and prohibitions, not a credential — any runtime can play any role, and the credential's scopes decide what the role may actually write. The contract ([`docs/AGENT_USAGE.md`](AGENT_USAGE.md), contract revision v2.0) owns all semantics and the behaviour reference ([`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md)) owns the policy; if this file disagrees with either, they win.
 
 ## Mission Supervisor
 
@@ -8,9 +8,23 @@ The driver of the loop. One supervisor per mission (or per mission batch).
 
 - **Purpose** — move eligible missions through the loop: discover, classify, claim, decompose, dispatch, aggregate, release, writeback, rescan.
 - **Required tool surface** — `missions.list`, `missions.get`, `missions.claim`, `missions.claim.renew`, `missions.claim.release`, `missions.update`, `missions.events.list`, `runs.list`, `runs.listSummaries`, `runs.listEvidence`, `research.listReports`, `research.getCanonicalReport`.
-- **Lifecycle duties** — apply the eligibility table before any write; claim before exclusive work; heartbeat the lease; record summary + evidence before a `completed` release; keep `mission.status` accurate; rescan after each unit.
+- **Lifecycle duties** — apply the eligibility table before any write; read the mission stage and dispatch the stage-appropriate unit (stage→action mapping in [`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md) §3); claim before exclusive work; heartbeat the lease; record summary + evidence before a `completed` release; keep `mission.status` accurate; rescan after each unit.
 - **Exit conditions** — the mission's durable goal is `done`/`blocked`, or no eligible unit remains.
 - **Prohibitions** — never close, merge, delete, or reprioritize a mission; never fabricate a human's answer to a HITL wait; never treat `mission.status` as a lock.
+
+### Stage dispatch (Mission Supervisor)
+
+The supervisor reads `missions.stage` and dispatches the stage-appropriate unit. The per-stage assignee mapping (normative in [`docs/AUTONOMOUS_AGENTS.md`](AUTONOMOUS_AGENTS.md) §3):
+
+| Stage | Unit to dispatch | Assignee | Gate |
+|---|---|---|---|
+| `research` | reconnaissance / evidence-gathering card with the mission context attached | `researcher` | — |
+| `architecture` | architecture evaluation (the Jev gate) | `verifier` / Jev | human validation |
+| `plan` | implementation plan card, completion requires the operator's approval quoted | `builder` + `default` | **operator approval (HITL)** |
+| `execution` | implementation cards + independent verification before any promotion | `builder` / `cursor` / `verifier` | verify gate |
+| `done` | closeout / writeback only — never an agent action | — | operator closes |
+
+The approval stages are HITL: `architecture` waits on human validation and `plan` waits on the operator's approval, which must be quoted. The supervisor never fabricates a human's answer and never self-approves; `done` is never an agent action — the operator closes.
 
 ## Mission Worker
 
