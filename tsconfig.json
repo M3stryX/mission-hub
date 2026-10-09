@@ -14,16 +14,6 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"],
-      "@domain/*": ["src/domain/*"],
-      "@db/*": ["src/db/*"],
-      "@api/*": ["src/api/*"],
-      "@mcp/*": ["src/mcp/*"],
-      "@auth/*": ["src/auth/*"],
-      "@observability/*": ["src/observability/*"]
-    },
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],

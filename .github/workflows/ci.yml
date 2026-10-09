@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [staging, main]
+    branches: [dev, staging, main]
   push:
-    branches: [staging, main, "feature/**"]
+    branches: [dev, staging, main, "feature/**"]
 
 jobs:
   verify:
@@ -42,6 +42,9 @@ jobs:
 
       - name: TypeCheck
         run: pnpm typecheck
+
+      - name: Docs links
+        run: pnpm docs:links
 
       - name: Migrate ephemeral PostgreSQL (fresh)
         run: pnpm db:migrate

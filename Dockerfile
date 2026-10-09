@@ -12,7 +12,6 @@ WORKDIR /app
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
-COPY --from=builder /app/scripts ./scripts
 RUN corepack enable pnpm && pnpm install --prod --frozen-lockfile
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

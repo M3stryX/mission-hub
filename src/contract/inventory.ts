@@ -152,7 +152,7 @@ export const CONTRACT_MCP_TOOLS = [
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
 export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.list':
-    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v1.',
+    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v1.2.',
   'missions.get':
     'Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.',
   'missions.create':
@@ -178,7 +178,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.claim.get':
     'Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.',
   'missions.claim':
-    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v1.',
+    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v1.2.',
   'missions.claim.renew':
     'Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.',
   'missions.claim.release':
