@@ -77,6 +77,27 @@ Notes:
 - `clients:admin`, `verify:admin`, and `approvals:human` are privileged or mint-forbidden scopes; treat any action needing them as human-only. [DOCUMENTED — AGENT_USAGE.md §7; AUDIT A]
 - Destructive verify (`verify:admin` + the allow-destructive-verify env flag) is staging-only and refused on production. [DOCUMENTED — AGENT_USAGE.md §8]
 
+### Stage → action mapping (normative)
+
+Any runtime can drive a mission from its stage: the stage names the unit to dispatch next. It is a dispatch input, never an authorization to write. The mapping:
+
+| Stage | Action | Assignee | Gate |
+|---|---|---|---|
+| `research` | reconnaissance / evidence-gathering card with the mission context attached | `researcher` | — |
+| `architecture` | architecture evaluation (the Jev gate) | `verifier` / Jev | human validation |
+| `plan` | implementation plan card, completion requires the operator's approval quoted | `builder` + `default` | **operator approval** |
+| `execution` | implementation cards + independent verification before any promotion | `builder` / `cursor` / `verifier` | verify gate |
+| `done` | closeout / writeback only — never an agent action | — | operator closes |
+
+Four rules keep the mapping safe:
+
+1. **The stage is record/read, not an enforced lock.** Like `mission.status` (§1.3), `missions.stage` records where the mission sits in its 5-stage lifecycle; no Hub code path blocks a run, claim, or stage change on it. [DOCUMENTED — AGENT_USAGE.md §12]
+2. **A stage change alone never authorizes a write.** Patching `stage` to `execution` does not make an implementation write eligible; the patch is a record update like any other.
+3. **The eligibility policy still governs every action.** The mapping chooses *which* unit to dispatch; the eligibility table above still classifies *whether* that unit's write is allowed, before any write happens.
+4. **A watcher's observe-only mode precedes activation.** A continuous driver (watcher, scheduler) runs observe-only first — it reads mission state and reports what it *would* dispatch — and dispatch behavior is activated only by a separate, explicit operator decision.
+
+Per-stage run purposes and proof artifacts stay the contract's to define: [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) §12.
+
 ## 4. Evidence and completion rule
 
 1. **Never infer completion from an agent self-report.** An `agent_self_report` summary is a claim, not validated truth; runtime evidence outranks docs and inference for current-state claims. [DOCUMENTED — AGENT_USAGE.md §5–6]
@@ -177,7 +198,7 @@ These are the honest gaps at contract v2.0. None of them is worked around in thi
 
 1. **Plan approval is recorded, not enforced — and currently unreachable.** The `approvals:human` scope is mint-forbidden and dropped from every available auth path, so no credential today can call `missions.planApproval` (observed: MCP `forbidden [approvals:human]`, REST 403). Plan approval is a recorded-intent surface, not an enforced gate. [OBSERVED — PROOF D; AUDIT A]
 2. **The summary surface is unguarded.** `runs.recordSummary` accepts `type = "plan_approval"` with only `summaries:write` — no `approvals:human`, no `plan_not_open`, no `self_approval` guard — so an agent can write a human-approval row through the summary surface. This contradicts the contract sentence "written only through the `approvals:human` endpoint" and is tracked as a separate fix mission. [OBSERVED — PROOF D]
-3. **No enforced stage gate at contract v2.0.** `missions.stage` (5-stage lifecycle) is exposed in the REST/MCP mission payload (read + write), but no code path blocks a run, claim, or transition on stage — stage-transition guards are still to come. [DOCUMENTED — AGENT_USAGE.md §12; AUDIT A]
+3. **The stage is not an enforced gate, there is no stage-ordering enforcement, and the watcher is a consumer.** `missions.stage` (5-stage lifecycle) is exposed in the REST/MCP mission payload (read + write), but no code path blocks a run, claim, or transition on stage — stage-transition guards are still to come. The Hub also never refuses an out-of-order stage value: any of the five stages can be set at any time. The stage→action mapping (§3) is dispatch policy, not enforcement. A watcher (or any continuous driver) is a consumer of Hub state, not a second authority — it reads the Hub and reports what it would dispatch — so the Hub remains the single source of truth. [DOCUMENTED — AGENT_USAGE.md §12; AUDIT A]
 4. **Jev gate is record/read only.** `jev.listEvaluations` / `jev.getGateStatus` serve recorded `jev_decision` summaries; the gate itself is still to come. [DOCUMENTED — AGENT_USAGE.md §13]
 5. **Scheduler/resume after a missed run is untested.** The documented pattern (external driver + claim/lease) has no missed-run recovery evidence; do not assume always-on processing or automatic resume. [DOCUMENTED — AUDIT C; UNTESTED]
 6. **Run-level events are not in mission events.** `run.created`, `run.summary_recorded`, `claim.fenced`, etc. surface only via `runs.listEvents`; `missions.events.list` shows claim acquire/expire/release and mission updates only. [OBSERVED — PROOF D]
