@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-09
+
+### Added
+
+- **Expose mission stage (v2.0)** — `missions.stage` is now part of the
+  REST/MCP mission payload: read from `missions.get` / `missions.list`,
+  set at create, and patchable via `missions.update` (REST + MCP). The
+  contract revision bumps from v1.2 to v2.0 (response shape change).
+  Stage transitions remain unguarded — enforcement is still to come.
+
 ## [0.1.0] - 2026-10-08
 
 ### Added

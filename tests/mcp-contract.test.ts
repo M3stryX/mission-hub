@@ -148,4 +148,52 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
 
     await client.close();
   });
+
+  it('accepts valid stage on create/update and rejects invalid stage', async () => {
+    const client = new Client(
+      { name: 'mission-hub-stage-test', version: '1.0.0' },
+      { versionNegotiation: { mode: 'auto' } },
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL('http://localhost/mcp'),
+      {
+        requestInit: { headers: { Authorization: 'Bearer mcp-token' } },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const headers = new Headers(request.headers);
+          headers.set('host', 'localhost');
+          return app.fetch(new Request(request, { headers }));
+        },
+      },
+    );
+
+    await client.connect(transport);
+
+    const created = await client.callTool({
+      name: 'missions.create',
+      arguments: { title: 'MCP stage mission', stage: 'execution' },
+    });
+    expect(created.isError).not.toBe(true);
+    const mission = (
+      created.structuredContent as { result: { id: number; stage: string } }
+    ).result;
+    expect(mission.stage).toBe('execution');
+
+    const updated = await client.callTool({
+      name: 'missions.update',
+      arguments: { id: mission.id, stage: 'done' },
+    });
+    expect(updated.isError).not.toBe(true);
+    expect(
+      (updated.structuredContent as { result: { stage: string } }).result.stage,
+    ).toBe('done');
+
+    const invalid = await client.callTool({
+      name: 'missions.create',
+      arguments: { title: 'MCP bad stage', stage: 'bogus' },
+    });
+    expect(invalid.isError).toBe(true);
+
+    await client.close();
+  });
 });
