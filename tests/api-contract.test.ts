@@ -169,6 +169,45 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     expect(events.rows.map((row) => row.kind)).toEqual(['create', 'update']);
   });
 
+  it('exposes stage in get/list payloads and rejects invalid stage', async () => {
+    const create = await app.request('http://localhost/api/v1/missions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ title: 'Stage mission', stage: 'execution' }),
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { mission: { id: number; stage: string } };
+    expect(created.mission.stage).toBe('execution');
+
+    const get = await app.request(`http://localhost/api/v1/missions/${created.mission.id}`, {
+      headers: auth,
+    });
+    expect(get.status).toBe(200);
+    const got = (await get.json()) as { mission: { stage: string } };
+    expect(got.mission.stage).toBe('execution');
+
+    const list = await app.request('http://localhost/api/v1/missions', { headers: auth });
+    expect(list.status).toBe(200);
+    const listed = (await list.json()) as { missions: Array<{ id: number; stage: string }> };
+    const found = listed.missions.find((m) => m.id === created.mission.id);
+    expect(found).toBeDefined();
+    expect(found!.stage).toBe('execution');
+
+    const patch = await app.request(`http://localhost/api/v1/missions/${created.mission.id}`, {
+      method: 'PATCH',
+      headers: auth,
+      body: JSON.stringify({ stage: 'done' }),
+    });
+    expect(patch.status).toBe(200);
+
+    const invalid = await app.request('http://localhost/api/v1/missions', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ title: 'Bad stage', stage: 'bogus' }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it('records run transitions, typed summaries and evidence references', async () => {
     const missionResponse = await app.request('http://localhost/api/v1/missions', {
       method: 'POST',
