@@ -54,6 +54,14 @@ Where the configuration comes from: `pnpm dev`, `pnpm start` and `pnpm clients` 
 
 The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`: a request carrying any other `Host` header is refused with `403`. Loopback (`127.0.0.1`, `localhost`) is always accepted and never needs listing — the container probes its own liveness over loopback. The variable is therefore exactly the names the deployment is served on, and the built-in default is loopback only, so every deployed environment sets it — and refuses to boot without it.
 
+The first line the process prints names the configuration it is actually running with:
+
+```text
+[mission-hub] env=production allowed_hosts=mission-hub.lan db=postgres:5432/mission_hub
+```
+
+Environment, the host names the request guard applies (the list, not a count), and the database target (`host:port/dbname`) — never the credentials. Read that line before anything else: a log that stops after it is a database that never came up, and the line that follows says why.
+
 ### 2. Docker image
 
 The repository `Dockerfile` builds a two-stage Node 22 Alpine image; the runtime stage carries the compiled server and `migrations/`, and applies pending migrations on boot.
@@ -74,7 +82,13 @@ curl http://localhost:3000/health
 docker inspect --format '{{.State.Health.Status}}' <container>   # starting → healthy
 ```
 
-- The process is fail-fast on the database: migrations run before the HTTP listener starts, so a container whose database is unreachable exits instead of serving traffic.
+- The process is fail-safe on the database rather than fail-fast: migrations run before the HTTP listener starts, and a database that is not up yet is retried inside a bounded window (`MISSION_HUB_DB_RETRY_WINDOW_MS`, default 25s) so the application survives a database that starts *after* it. When the window runs out the container exits `1` behind exactly one line, which is the one to read when a deployment "succeeds" but never answers:
+
+```text
+[mission-hub] fatal: migrations failed: connect ECONNREFUSED 127.0.0.1:5432: postgres:5432/mission_hub
+```
+
+  The line carries the cause and the target (`host:port/dbname`) and never a credential — a wrong `DATABASE_URL` and a dead database are told apart without shelling into the host. Keep the window below the platform's health-check tolerance so a genuinely unreachable database still fails the deployment.
 
 ### 3. Dokploy (branch → environment variables)
 
@@ -103,11 +117,14 @@ Environment variables (see `.env.example`; the committed values are placeholders
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DATABASE_URL` | — (required) | PostgreSQL connection string. The server, `pnpm db:migrate` and the legacy tooling fail fast without it. |
+| `DATABASE_URL` | — (required) | PostgreSQL connection string. The server, `pnpm db:migrate` and the legacy tooling fail without it; the boot line reports `db=unconfigured` when it is missing. |
 | `PORT` | `3000` | HTTP listen port. |
 | `HOST` | `0.0.0.0` | HTTP bind address. |
 | `MISSION_HUB_ALLOWED_HOSTS` | loopback only (`localhost`, `127.0.0.1`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. The code ships **no deployment topology**: a deployed environment sets this variable to the names it is served on, and the server refuses to boot when a non-development environment leaves it unset or empty. Loopback (`127.0.0.1`, `localhost`) is **built in** and accepted in every environment, so it never belongs in this list — the container's own health probe uses it. Any other host is answered with `403`. No wildcards, no regex. |
-| `MISSION_HUB_ENV` | `development` | `development`, `staging` or `production` — the deployment's own name, under the conventional `*_ENV` key (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`). Unset or blank means `development`; an unrecognized value stops the process at boot instead of silently becoming `development`. Purpose: the boot line's identity (`env=… allowed_hosts=…`) and the rule that a non-development deployment must declare its Host allowlist. It gates **no route**. |
+| `MISSION_HUB_ENV` | `development` | `development`, `staging` or `production` — the deployment's own name, under the conventional `*_ENV` key (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`). Unset or blank means `development`; an unrecognized value stops the process at boot instead of silently becoming `development`. Purpose: the boot line's identity (`env=… allowed_hosts=… db=…`) and the rule that a non-development deployment must declare its Host allowlist. It gates **no route**. |
+| `MISSION_HUB_DB_RETRY_WINDOW_MS` | `25000` | How long boot keeps retrying the initial migrations while the database is unreachable (milliseconds). `0` means a single attempt. Keep it below the platform's health-check tolerance. |
+| `MISSION_HUB_DB_RETRY_INITIAL_MS` | `1000` | First retry delay; each further attempt doubles it, up to the maximum below. |
+| `MISSION_HUB_DB_RETRY_MAX_MS` | `8000` | Cap on a single retry delay. |
 | `MISSION_HUB_COMMIT` | — (unset → `unknown`) | Commit the running build was made from, reported by `GET /health`. Supplied by the image build (`--build-arg MISSION_HUB_COMMIT=<sha>`, wired in CI), so it describes the built artefact; a build that supplies nothing reports `unknown` rather than a guessed revision. |
 | `NODE_ENV` | — | Not read by this code. Set `NODE_ENV=production` on every deployed application (staging included) so the Node libraries it uses take their production paths. |
 | `MISSION_HUB_ADMIN_TOKEN` | — | Bootstrap admin Bearer for client administration on both surfaces: REST `/api/v1/admin/clients` (create/list/revoke) and the MCP tools `clients.list` / `clients.create` / `clients.revoke`. It carries only the privileged `clients:admin` scope, so `/mcp` admits it explicitly for those tools. Never grant it to a service client. |
@@ -145,7 +162,8 @@ Mission Hub ships a runtime-agnostic [Autonomous Agent Kit](docs/AUTONOMOUS_AGEN
 
 ```text
 src/
-├── index.ts            # Entry point: migrations on boot, env-client seeding, HTTP server
+├── index.ts            # Entry point: boot line, retried migrations, env-client seeding, HTTP server
+├── boot.ts             # Boot diagnostics: effective-config line, DB retry window, one fatal line
 ├── app.ts              # Hono app — all REST routes, /mcp endpoint, auth wiring
 ├── auth/
 │   ├── config.ts       # Scopes, admin token, client credential loading
