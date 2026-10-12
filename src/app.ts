@@ -14,6 +14,11 @@ import {
   type AuthResolverOptions,
 } from './auth/resolve.js';
 import {
+  readCommit,
+  readContractVersion,
+  readProductVersion,
+} from './build-info.js';
+import {
   ClaimAlreadyReleasedError,
   ClaimConflictError,
   ClaimExpiredError,
@@ -391,7 +396,18 @@ export function createApp(
     return requirePrincipal(authorization, store, authOptions, scopes);
   }
 
-  app.get('/health', (c) => c.json({ status: 'ok' }));
+  // Liveness + build identity: which version, contract revision and commit is
+  // actually answering. Read-only, unauthenticated, and deliberately free of
+  // store access so it answers even when the database is unhealthy.
+  app.get('/health', (c) =>
+    c.json({
+      status: 'ok',
+      version: readProductVersion(),
+      contract: readContractVersion(),
+      commit: readCommit(),
+      env: getEnv(),
+    }),
+  );
 
   app.get('/ready', async (c) => {
     try {

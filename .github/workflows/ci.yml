@@ -62,4 +62,4 @@ jobs:
         run: pnpm build
 
       - name: Docker build
-        run: docker build -t mission-hub:ci .
+        run: docker build --build-arg MISSION_HUB_COMMIT="${{ github.sha }}" -t mission-hub:ci .
