@@ -103,7 +103,7 @@ Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidenc
 | Production | `mission-hub.lan` |
 | Staging | `mission-hub-staging.lan` |
 
-Destructive verify (`verify:admin` + `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY`) is staging-only.
+Destructive verify (`verify:admin` + `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY`) is staging-only — the flag is the only gate, and the deployment environment name does not enable it.
 
 ## 9. Secrets
 
