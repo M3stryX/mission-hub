@@ -9,6 +9,11 @@ RUN pnpm build
 # Production stage
 FROM node:22-alpine AS runner
 WORKDIR /app
+# Build identity: the commit this image was built from. CI and Dokploy pass
+# `--build-arg MISSION_HUB_COMMIT=<sha>`; a build that passes nothing serves the
+# literal `unknown` from GET /health instead of an invented revision.
+ARG MISSION_HUB_COMMIT=
+ENV MISSION_HUB_COMMIT=${MISSION_HUB_COMMIT}
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
