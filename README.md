@@ -30,9 +30,18 @@ export DATABASE_URL='postgres://user:REPLACE_ME@localhost:5432/mission_hub'
 pnpm db:migrate               # apply versioned SQL migrations from migrations/
 
 pnpm dev                      # tsx watch on http://localhost:3000
-curl http://localhost:3000/health   # → {"status":"ok"}
+curl http://localhost:3000/health   # → {"status":"ok","version":"0.1.0","contract":"v2.0","commit":"unknown","env":"development"}
 curl http://localhost:3000/ready    # → {"status":"ready"}, or 503 {"status":"not_ready"} when the database is unreachable
 ```
+
+**Which code is answering.** `GET /health` also reports the build identity: `version` (read from `package.json`), `contract` (the agent contract revision), `commit` (the commit the running build was made from) and `env`. Compare it with the revision you expect — the check that catches a redeploy which served a cached image, since a stale image keeps reporting its old `commit`:
+
+```bash
+curl -s http://localhost:3000/health    # → {"status":"ok","version":"0.1.0","contract":"v2.0","commit":"<sha>","env":"staging"}
+git rev-parse HEAD                      # the revision you expected to be serving
+```
+
+`commit` is `unknown` when the build was given none — never a guessed revision.
 
 Compiled entry point (same server, no watcher):
 
@@ -50,12 +59,14 @@ The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`:
 The repository `Dockerfile` builds a two-stage Node 22 Alpine image; the runtime stage carries the compiled server and `migrations/`, and applies pending migrations on boot.
 
 ```bash
-docker build -t mission-hub .
+# bake the revision into the image so GET /health can be compared with it
+docker build --build-arg MISSION_HUB_COMMIT="$(git rev-parse HEAD)" -t mission-hub .
 docker run --rm -p 3000:3000 --env-file .env mission-hub
 curl http://localhost:3000/health
 ```
 
 - The container listens on `HOST`/`PORT` (`0.0.0.0:3000` by default) and exposes port `3000`.
+- The image bakes its build identity: `--build-arg MISSION_HUB_COMMIT=<sha>` is what `GET /health` reports as `commit` (CI passes `github.sha`). A build that passes no argument serves `unknown`, and a redeploy that served a stale cached image keeps reporting its previous `commit` — which is how you tell one from a fresh build.
 - `DATABASE_URL` has to be reachable from inside the container: point it at a host name or IP, never `localhost` (inside the container, `localhost` is the container itself).
 - The image declares a container `HEALTHCHECK` that probes `/health` on `$PORT` (30s interval, 5s timeout, 15s start period, 3 retries), so Docker reports the container state directly:
 
@@ -97,6 +108,7 @@ Environment variables (see `.env.example`; the committed values are placeholders
 | `HOST` | `0.0.0.0` | HTTP bind address. |
 | `MISSION_HUB_ALLOWED_HOSTS` | loopback only (`localhost`, `127.0.0.1`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. The code ships **no deployment topology**: a deployed environment sets this variable to the names it is served on, and the server refuses to boot when a non-development environment leaves it unset or empty. Loopback (`127.0.0.1`, `localhost`) is **built in** and accepted in every environment, so it never belongs in this list — the container's own health probe uses it. Any other host is answered with `403`. No wildcards, no regex. |
 | `MISSION_HUB_ENV` | `development` | `development`, `staging` or `production` — the deployment's own name, under the conventional `*_ENV` key (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`). Unset or blank means `development`; an unrecognized value stops the process at boot instead of silently becoming `development`. Purpose: the boot line's identity (`env=… allowed_hosts=…`) and the rule that a non-development deployment must declare its Host allowlist. It gates **no route**. |
+| `MISSION_HUB_COMMIT` | — (unset → `unknown`) | Commit the running build was made from, reported by `GET /health`. Supplied by the image build (`--build-arg MISSION_HUB_COMMIT=<sha>`, wired in CI), so it describes the built artefact; a build that supplies nothing reports `unknown` rather than a guessed revision. |
 | `NODE_ENV` | — | Not read by this code. Set `NODE_ENV=production` on every deployed application (staging included) so the Node libraries it uses take their production paths. |
 | `MISSION_HUB_ADMIN_TOKEN` | — | Bootstrap admin Bearer for `/api/v1/admin/clients` (create/list/revoke). Never grant it to a service client. |
 | `MISSION_HUB_CLIENTS_JSON` | — | Optional seed/fallback clients, upserted hashed on boot. `verify:admin` can only be seeded this way — it cannot be minted through the admin API. |

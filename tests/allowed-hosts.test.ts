@@ -9,6 +9,11 @@ import {
   isHostAllowed,
   LOOPBACK_HOSTS,
 } from '../src/app.js';
+import {
+  readCommit,
+  readContractVersion,
+  readProductVersion,
+} from '../src/build-info.js';
 import type { MissionHubStore } from '../src/db/store.js';
 
 const ENV_KEY = 'MISSION_HUB_ALLOWED_HOSTS';
@@ -245,7 +250,15 @@ describe('Host allowlist middleware', () => {
     const response = await healthRequest('hub.example.com');
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: 'ok' });
+    // The body shape is owned by tests/health.test.ts; here it proves the
+    // request reached the application through the Host allowlist.
+    await expect(response.json()).resolves.toEqual({
+      status: 'ok',
+      version: readProductVersion(),
+      contract: readContractVersion(),
+      commit: readCommit(),
+      env: getEnv(),
+    });
   });
 
   it('rejects a host the configured list omits', async () => {
