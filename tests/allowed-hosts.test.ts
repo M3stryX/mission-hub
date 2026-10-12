@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  allowedHostsFor,
   assertHostAllowlistConfigured,
   createApp,
   DEFAULT_ALLOWED_HOSTS,
   getAllowedHosts,
   getEnv,
   isHostAllowed,
+  LOOPBACK_HOSTS,
 } from '../src/app.js';
 import type { MissionHubStore } from '../src/db/store.js';
 
@@ -73,11 +75,11 @@ describe('isHostAllowed', () => {
     expect(isHostAllowed('internal.example.lan', env)).toBe(true);
   });
 
-  it('rejects a host the defined variable omits', () => {
+  it('rejects a host the configured list omits', () => {
     const env = { MISSION_HUB_ALLOWED_HOSTS: 'hub.example.com' };
 
-    expect(isHostAllowed('localhost', env)).toBe(false);
     expect(isHostAllowed('other.example.com', env)).toBe(false);
+    expect(isHostAllowed('mission-hub.lan', env)).toBe(false);
   });
 
   it('applies the loopback default when the variable is undefined', () => {
@@ -114,6 +116,47 @@ describe('isHostAllowed', () => {
     expect(isHostAllowed(undefined, {})).toBe(false);
     expect(isHostAllowed('', {})).toBe(false);
     expect(isHostAllowed('   ', {})).toBe(false);
+  });
+});
+
+describe('loopback is built in', () => {
+  it('always accepts loopback, whatever the configured allowlist says', () => {
+    const env = { MISSION_HUB_ALLOWED_HOSTS: 'mission-hub-staging.lan' };
+
+    expect(isHostAllowed('127.0.0.1', env)).toBe(true);
+    expect(isHostAllowed('127.0.0.1:3000', env)).toBe(true);
+    expect(isHostAllowed('localhost', env)).toBe(true);
+    expect(isHostAllowed('mission-hub-staging.lan', env)).toBe(true);
+    expect(isHostAllowed('evil.lan', env)).toBe(false);
+  });
+
+  it('appends loopback to the configured names, without duplicates', () => {
+    expect(
+      allowedHostsFor({ MISSION_HUB_ALLOWED_HOSTS: 'hub.example.com' }),
+    ).toEqual(['hub.example.com', ...LOOPBACK_HOSTS]);
+    expect(
+      allowedHostsFor({ MISSION_HUB_ALLOWED_HOSTS: 'hub.example.com,127.0.0.1' }),
+    ).toEqual(['hub.example.com', '127.0.0.1', 'localhost']);
+  });
+
+  it('answers its own health probe over loopback when the allowlist lists only deployment names', async () => {
+    setAllowedHostsEnv('mission-hub-staging.lan');
+
+    expect((await healthRequest('127.0.0.1:3000')).status).toBe(200);
+    expect((await healthRequest('localhost')).status).toBe(200);
+    expect((await healthRequest('evil.lan')).status).toBe(403);
+  });
+
+  it('does not let the built-in entries satisfy the boot policy', () => {
+    expect(() =>
+      assertHostAllowlistConfigured({ MISSION_HUB_ENV: 'staging' }),
+    ).toThrow(/MISSION_HUB_ALLOWED_HOSTS must be set/);
+    expect(() =>
+      assertHostAllowlistConfigured({
+        MISSION_HUB_ENV: 'staging',
+        MISSION_HUB_ALLOWED_HOSTS: ' , ',
+      }),
+    ).toThrow(/empty allowlist/);
   });
 });
 

@@ -266,6 +266,30 @@ export function getAllowedHosts(
 }
 
 /**
+ * Loopback names every deployment accepts, on top of its own allowlist.
+ *
+ * The container probes its own liveness over loopback — the Dockerfile
+ * `HEALTHCHECK` calls `http://127.0.0.1:${PORT}/health` — while the request
+ * guard below is app-wide (`app.use('*', ...)`). A deployment that listed only
+ * its public names would therefore answer its own health probe with `403` and
+ * be marked unhealthy, so loopback is a built-in constant rather than a
+ * deployment setting: it is never a name a deployment is *reached* by, and it
+ * cannot be forgotten the way an environment entry can.
+ */
+export const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost'];
+
+/**
+ * The effective allowlist the request guard applies: the configured names plus
+ * the built-in {@link LOOPBACK_HOSTS}. `getAllowedHosts` stays the *configured*
+ * list so the boot assertion cannot be satisfied by the built-in entries.
+ */
+export function allowedHostsFor(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  return [...new Set([...getAllowedHosts(env), ...LOOPBACK_HOSTS])];
+}
+
+/**
  * Exact (non wildcard) Host allowlist check. The incoming header is normalized
  * the same way as the request middleware: port stripped, trimmed, lowercased.
  */
@@ -275,7 +299,7 @@ export function isHostAllowed(
 ): boolean {
   const normalized = requestHost(host);
   if (normalized.length === 0) return false;
-  return getAllowedHosts(env).includes(normalized);
+  return allowedHostsFor(env).includes(normalized);
 }
 
 /**
@@ -358,7 +382,7 @@ export function createApp(
     process.env.MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY === 'true';
 
   const app = new Hono();
-  app.use('*', hostHeaderValidation(getAllowedHosts()));
+  app.use('*', hostHeaderValidation(allowedHostsFor()));
 
   async function principalFor(
     authorization: string | undefined,

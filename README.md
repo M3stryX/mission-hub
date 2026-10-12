@@ -43,7 +43,7 @@ pnpm start
 
 Where the configuration comes from: `pnpm dev`, `pnpm start` and `pnpm clients` load `.env`; `pnpm db:migrate` and `pnpm legacy:import` read `DATABASE_URL` from the process environment; `pnpm legacy:export` takes its paths as arguments. Migrations also run automatically on boot, so the explicit migration step is only needed to prepare a database without starting the server.
 
-The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`: a request carrying any other `Host` header is refused with `403`. The built-in default is loopback only (`localhost`, `127.0.0.1`), so every deployed environment sets the variable — and refuses to boot without it.
+The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`: a request carrying any other `Host` header is refused with `403`. Loopback (`127.0.0.1`, `localhost`) is always accepted and never needs listing — the container probes its own liveness over loopback. The variable is therefore exactly the names the deployment is served on, and the built-in default is loopback only, so every deployed environment sets it — and refuses to boot without it.
 
 ### 2. Docker image
 
@@ -78,7 +78,7 @@ Deployment is branch-driven (`feature/* → dev → staging → main`, see Contr
 
 - `DATABASE_URL` — that application's PostgreSQL database.
 - `MISSION_HUB_ADMIN_TOKEN` — a distinct bootstrap admin Bearer per application.
-- `MISSION_HUB_ALLOWED_HOSTS` — the host names the application must answer on (its public domain and internal name), otherwise requests are refused with `403`. Required outside development: an environment that leaves it unset refuses to boot.
+- `MISSION_HUB_ALLOWED_HOSTS` — the host names the application must answer on (its public domain and internal name), otherwise requests are refused with `403`. List only the deployment's own names: loopback is built in and always accepted. Required outside development: an environment that leaves it unset refuses to boot.
 - `MISSION_HUB_ENV` — `staging` or `production` for a deployed application; leave it unset for local work (unset means `development`, and any other value refuses to boot rather than guess).
 - `NODE_ENV=production` — set it on every deployed application, staging included: Node libraries switch to their production behaviour on it. It is not what names the environment; `MISSION_HUB_ENV` is.
 - `MISSION_HUB_CLIENTS_JSON` — optional seeded clients.
@@ -95,7 +95,7 @@ Environment variables (see `.env.example`; the committed values are placeholders
 | `DATABASE_URL` | — (required) | PostgreSQL connection string. The server, `pnpm db:migrate` and the legacy tooling fail fast without it. |
 | `PORT` | `3000` | HTTP listen port. |
 | `HOST` | `0.0.0.0` | HTTP bind address. |
-| `MISSION_HUB_ALLOWED_HOSTS` | loopback only (`localhost`, `127.0.0.1`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. The code ships **no deployment topology**: a deployed environment sets this variable to the names it is served on, and the server refuses to boot when a non-development environment leaves it unset or empty. Any other host is answered with `403`. No wildcards, no regex. |
+| `MISSION_HUB_ALLOWED_HOSTS` | loopback only (`localhost`, `127.0.0.1`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. The code ships **no deployment topology**: a deployed environment sets this variable to the names it is served on, and the server refuses to boot when a non-development environment leaves it unset or empty. Loopback (`127.0.0.1`, `localhost`) is **built in** and accepted in every environment, so it never belongs in this list — the container's own health probe uses it. Any other host is answered with `403`. No wildcards, no regex. |
 | `MISSION_HUB_ENV` | `development` | `development`, `staging` or `production` — the deployment's own name, under the conventional `*_ENV` key (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`). Unset or blank means `development`; an unrecognized value stops the process at boot instead of silently becoming `development`. Purpose: the boot line's identity (`env=… allowed_hosts=…`) and the rule that a non-development deployment must declare its Host allowlist. It gates **no route**. |
 | `NODE_ENV` | — | Not read by this code. Set `NODE_ENV=production` on every deployed application (staging included) so the Node libraries it uses take their production paths. |
 | `MISSION_HUB_ADMIN_TOKEN` | — | Bootstrap admin Bearer for `/api/v1/admin/clients` (create/list/revoke). Never grant it to a service client. |

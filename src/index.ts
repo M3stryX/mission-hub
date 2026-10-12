@@ -4,7 +4,7 @@ import { Pool } from 'pg';
 import {
   assertHostAllowlistConfigured,
   createApp,
-  getAllowedHosts,
+  allowedHostsFor,
   getEnv,
 } from './app.js';
 import {
@@ -19,7 +19,7 @@ import { MissionHubStore } from './db/store.js';
 // allowlist must be declared, otherwise every request would be refused with 403.
 assertHostAllowlistConfigured();
 console.error(
-  `[mission-hub] env=${getEnv()} allowed_hosts=${getAllowedHosts().length}`,
+  `[mission-hub] env=${getEnv()} allowed_hosts=${allowedHostsFor().length}`,
 );
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
