@@ -7,7 +7,7 @@ Standalone **mission + execution-trace** service for agent workflows. Mission Hu
 - **Runs** — transient execution runs per client/agent, optionally typed by purpose (`research`, `implementation`, `architecture`, `planning`, `jev_gate`, …).
 - **Summaries & evidence** — typed run artifacts (`research_report`, `plan_summary`, `plan_approval`, `jev_decision`, …) with provenance metadata and evidence references.
 
-*Mission Hub 0.1.0 — agent contract revision v2.0.* The product version is `0.1.0`; `v2.0` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — agent contract revision v3.0.* The product version is `0.1.0`; `v3.0` is the agent contract/schema revision.
 
 REST ↔ MCP parity is enforced: every agent-facing read/write exists on both surfaces unless documented otherwise. The machine inventory (`src/contract/inventory.ts` → `docs/contract-inventory.json`) tracks enums, scopes, tables, routes and MCP tools; `pnpm test:contract-inventory` (and CI) fail on drift.
 
@@ -30,14 +30,14 @@ export DATABASE_URL='postgres://user:REPLACE_ME@localhost:5432/mission_hub'
 pnpm db:migrate               # apply versioned SQL migrations from migrations/
 
 pnpm dev                      # tsx watch on http://localhost:3000
-curl http://localhost:3000/health   # → {"status":"ok","version":"0.1.0","contract":"v2.0","commit":"unknown","env":"development"}
+curl http://localhost:3000/health   # → {"status":"ok","version":"0.1.0","contract":"v3.0","commit":"unknown","env":"development"}
 curl http://localhost:3000/ready    # → {"status":"ready"}, or 503 {"status":"not_ready"} when the database is unreachable
 ```
 
 **Which code is answering.** `GET /health` also reports the build identity: `version` (read from `package.json`), `contract` (the agent contract revision), `commit` (the commit the running build was made from) and `env`. Compare it with the revision you expect — the check that catches a redeploy which served a cached image, since a stale image keeps reporting its old `commit`:
 
 ```bash
-curl -s http://localhost:3000/health    # → {"status":"ok","version":"0.1.0","contract":"v2.0","commit":"<sha>","env":"staging"}
+curl -s http://localhost:3000/health    # → {"status":"ok","version":"0.1.0","contract":"v3.0","commit":"<sha>","env":"staging"}
 git rev-parse HEAD                      # the revision you expected to be serving
 ```
 
@@ -53,6 +53,14 @@ pnpm start
 Where the configuration comes from: `pnpm dev`, `pnpm start` and `pnpm clients` load `.env`; `pnpm db:migrate` and `pnpm legacy:import` read `DATABASE_URL` from the process environment; `pnpm legacy:export` takes its paths as arguments. Migrations also run automatically on boot, so the explicit migration step is only needed to prepare a database without starting the server.
 
 The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`: a request carrying any other `Host` header is refused with `403`. Loopback (`127.0.0.1`, `localhost`) is always accepted and never needs listing — the container probes its own liveness over loopback. The variable is therefore exactly the names the deployment is served on, and the built-in default is loopback only, so every deployed environment sets it — and refuses to boot without it.
+
+The first line the process prints names the configuration it is actually running with:
+
+```text
+[mission-hub] env=production allowed_hosts=mission-hub.lan db=postgres:5432/mission_hub
+```
+
+Environment, the host names the request guard applies (the list, not a count), and the database target (`host:port/dbname`) — never the credentials. Read that line before anything else: a log that stops after it is a database that never came up, and the line that follows says why.
 
 ### 2. Docker image
 
@@ -74,7 +82,13 @@ curl http://localhost:3000/health
 docker inspect --format '{{.State.Health.Status}}' <container>   # starting → healthy
 ```
 
-- The process is fail-fast on the database: migrations run before the HTTP listener starts, so a container whose database is unreachable exits instead of serving traffic.
+- The process is fail-safe on the database rather than fail-fast: migrations run before the HTTP listener starts, and a database that is not up yet is retried inside a bounded window (`MISSION_HUB_DB_RETRY_WINDOW_MS`, default 25s) so the application survives a database that starts *after* it. When the window runs out the container exits `1` behind exactly one line, which is the one to read when a deployment "succeeds" but never answers:
+
+```text
+[mission-hub] fatal: migrations failed: connect ECONNREFUSED 127.0.0.1:5432: postgres:5432/mission_hub
+```
+
+  The line carries the cause and the target (`host:port/dbname`) and never a credential — a wrong `DATABASE_URL` and a dead database are told apart without shelling into the host. Keep the window below the platform's health-check tolerance so a genuinely unreachable database still fails the deployment.
 
 ### 3. Dokploy (branch → environment variables)
 
@@ -103,41 +117,44 @@ Environment variables (see `.env.example`; the committed values are placeholders
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DATABASE_URL` | — (required) | PostgreSQL connection string. The server, `pnpm db:migrate` and the legacy tooling fail fast without it. |
+| `DATABASE_URL` | — (required) | PostgreSQL connection string. The server, `pnpm db:migrate` and the legacy tooling fail without it; the boot line reports `db=unconfigured` when it is missing. |
 | `PORT` | `3000` | HTTP listen port. |
 | `HOST` | `0.0.0.0` | HTTP bind address. |
 | `MISSION_HUB_ALLOWED_HOSTS` | loopback only (`localhost`, `127.0.0.1`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. The code ships **no deployment topology**: a deployed environment sets this variable to the names it is served on, and the server refuses to boot when a non-development environment leaves it unset or empty. Loopback (`127.0.0.1`, `localhost`) is **built in** and accepted in every environment, so it never belongs in this list — the container's own health probe uses it. Any other host is answered with `403`. No wildcards, no regex. |
-| `MISSION_HUB_ENV` | `development` | `development`, `staging` or `production` — the deployment's own name, under the conventional `*_ENV` key (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`). Unset or blank means `development`; an unrecognized value stops the process at boot instead of silently becoming `development`. Purpose: the boot line's identity (`env=… allowed_hosts=…`) and the rule that a non-development deployment must declare its Host allowlist. It gates **no route**. |
+| `MISSION_HUB_ENV` | `development` | `development`, `staging` or `production` — the deployment's own name, under the conventional `*_ENV` key (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`). Unset or blank means `development`; an unrecognized value stops the process at boot instead of silently becoming `development`. Purpose: the boot line's identity (`env=… allowed_hosts=… db=…`) and the rule that a non-development deployment must declare its Host allowlist. It gates **no route**. |
+| `MISSION_HUB_DB_RETRY_WINDOW_MS` | `25000` | How long boot keeps retrying the initial migrations while the database is unreachable (milliseconds). `0` means a single attempt. Keep it below the platform's health-check tolerance. |
+| `MISSION_HUB_DB_RETRY_INITIAL_MS` | `1000` | First retry delay; each further attempt doubles it, up to the maximum below. |
+| `MISSION_HUB_DB_RETRY_MAX_MS` | `8000` | Cap on a single retry delay. |
 | `MISSION_HUB_COMMIT` | — (unset → `unknown`) | Commit the running build was made from, reported by `GET /health`. Supplied by the image build (`--build-arg MISSION_HUB_COMMIT=<sha>`, wired in CI), so it describes the built artefact; a build that supplies nothing reports `unknown` rather than a guessed revision. |
 | `NODE_ENV` | — | Not read by this code. Set `NODE_ENV=production` on every deployed application (staging included) so the Node libraries it uses take their production paths. |
-| `MISSION_HUB_ADMIN_TOKEN` | — | Bootstrap admin Bearer for `/api/v1/admin/clients` (create/list/revoke). Never grant it to a service client. |
+| `MISSION_HUB_ADMIN_TOKEN` | — | Bootstrap admin Bearer for client administration on both surfaces: REST `/api/v1/admin/clients` (create/list/revoke) and the MCP tools `clients.list` / `clients.create` / `clients.revoke`. It carries only the privileged `clients:admin` scope, so `/mcp` admits it explicitly for those tools. Never grant it to a service client. |
 | `MISSION_HUB_CLIENTS_JSON` | — | Optional seed/fallback clients, upserted hashed on boot. `verify:admin` can only be seeded this way — it cannot be minted through the admin API. |
 | `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY` | `false` | The **only** gate for `DELETE /api/v1/admin/verify-fixtures/:missionId` (with the `verify:admin` scope): staging-only, must never be `true` in production. The deployment environment does not enable it. |
 
-Admin clients are minted with `pnpm clients create <clientId> --scopes <scope,scope>`, listed with `pnpm clients list` and revoked with `pnpm clients revoke <clientId>`; the same operations exist as `POST`, `GET` and `POST /api/v1/admin/clients/:clientId/revoke`. The privileged `approvals:human` and `verify:admin` scopes cannot be minted through the admin API.
+Admin clients are minted with `pnpm clients create <clientId> --scopes <scope,scope>`, listed with `pnpm clients list` and revoked with `pnpm clients revoke <clientId>`; the same operations exist as `POST`, `GET` and `POST /api/v1/admin/clients/:clientId/revoke`, and over MCP as `clients.create` / `clients.list` / `clients.revoke` (admin token only — a scoped service client gets `forbidden` with `required: ["clients:admin"]`). A created client's plaintext token is returned once and never retrievable again. The privileged `approvals:human` and `verify:admin` scopes cannot be minted through the admin API.
 
 ## Mission lifecycle
 
-Missions move through a 5-stage lifecycle (`missions.stage`, exposed in the mission payload at contract v2.0 — gate enforcement is still to come):
+Missions move through a 5-stage lifecycle (`missions.stage`, exposed in the mission payload at contract v3.0 — gate enforcement is still to come):
 
 ```text
 research → architecture (Jev gate) → plan (mandatory human approval) → execution → done
 ```
 
 1. **Research** — `purpose = research` run; the canonical `research_report` summary + evidence proves the stage.
-2. **Architecture / Jev gate** — `purpose = architecture` run records a `jev_decision` summary (with Jev evidence on a `jev_gate` run). At contract v2.0 the Hub stores and serves evaluations; it does not evaluate or block.
+2. **Architecture / Jev gate** — `purpose = architecture` run records a `jev_decision` summary (with Jev evidence on a `jev_gate` run). At contract v3.0 the Hub stores and serves evaluations; it does not evaluate or block.
 3. **Plan** — `purpose = planning` run writes a `plan_summary`; a **human** principal (never the plan author) records `plan_approval` via `POST /api/v1/missions/:id/plan-approval` / `missions.planApproval` (scope `approvals:human`).
 4. **Execution** — exclusive work runs under a claim: `missions.claim` (atomic session + run + claim) → heartbeat with `missions.claim.renew` → report with `runs.recordSummary` + `runs.recordEvidence` → `missions.claim.release` (`completed` requires summary + evidence and terminalizes the run `COMPLETED`; `failed`/`abandoned` terminalize `FAILED`).
 5. **Done** — checklist complete and run `COMPLETED`; business status closed with `missions.update` → `done`.
 
-Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v2.0, authoritative over skills).
+Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v3.0, authoritative over skills).
 
 ## Autonomous Agent Workflows
 
 Mission Hub ships a runtime-agnostic [Autonomous Agent Kit](docs/AUTONOMOUS_AGENTS.md) for agents that drive missions end-to-end: discover → claim → work → verify → release → writeback → resume.
 
 - **Proven:** the read-only loop (list → get → checklist/sources/events → runs/summaries/evidence) ran end-to-end on a live instance.
-- **Not proven:** no enforced approval gate at contract v2.0 (plan approval is recorded, not enforced), no scheduler-recovery evidence, and no native autonomy loop in the mainstream CLIs (Claude Code, Codex, OpenCode are one-shot; an external driver is required).
+- **Not proven:** no enforced approval gate at contract v3.0 (plan approval is recorded, not enforced), no scheduler-recovery evidence, and no native autonomy loop in the mainstream CLIs (Claude Code, Codex, OpenCode are one-shot; an external driver is required).
 - Kit: [behaviour reference](docs/AUTONOMOUS_AGENTS.md) · [agent roles](docs/AGENT_ROLES.md) · [bootstrap prompt](docs/BOOTSTRAP_PROMPT.md) · [runtime adapters](docs/RUNTIME_ADAPTERS.md)
 - Non-goals: mission close/merge/delete/reprioritize are never autonomous; destructive and production actions need explicit human authorization.
 
@@ -145,7 +162,8 @@ Mission Hub ships a runtime-agnostic [Autonomous Agent Kit](docs/AUTONOMOUS_AGEN
 
 ```text
 src/
-├── index.ts            # Entry point: migrations on boot, env-client seeding, HTTP server
+├── index.ts            # Entry point: boot line, retried migrations, env-client seeding, HTTP server
+├── boot.ts             # Boot diagnostics: effective-config line, DB retry window, one fatal line
 ├── app.ts              # Hono app — all REST routes, /mcp endpoint, auth wiring
 ├── auth/
 │   ├── config.ts       # Scopes, admin token, client credential loading
@@ -206,12 +224,12 @@ pnpm test:contract-inventory
 - Using `mission.status` as a lock or lease (use claims).
 - Vector search (deferred — Postgres full-text `simple` configuration only).
 - External authentication (deferred — hashed API clients + admin Bearer today).
-- Jev gate enforcement and stage-transition guards (still to come — contract v2.0 exposes `stage` read/write but does not enforce transitions).
+- Jev gate enforcement and stage-transition guards (still to come — contract v3.0 exposes `stage` read/write but does not enforce transitions).
 - Putting secrets, tokens or passwords in chat, commits or memory.
 
 ## Docs & license
 
-- Agent contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v2.0)
+- Agent contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v3.0)
 - Machine inventory: [`docs/contract-inventory.json`](docs/contract-inventory.json)
 - Legacy migration: [`docs/migration.md`](docs/migration.md)
 - Agent guide: [`AGENTS.md`](AGENTS.md)

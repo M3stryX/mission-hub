@@ -5,7 +5,7 @@
  */
 
 export const AGENT_USAGE_CONTRACT = {
-  version: 'v2.0',
+  version: 'v3.0',
   path: 'docs/AGENT_USAGE.md',
 } as const;
 
@@ -147,12 +147,15 @@ export const CONTRACT_MCP_TOOLS = [
   'jev.listEvaluations',
   'jev.getGateStatus',
   'missions.planApproval',
+  'clients.list',
+  'clients.create',
+  'clients.revoke',
 ] as const;
 
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
 export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.list':
-    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v2.0.',
+    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.0.',
   'missions.get':
     'Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.',
   'missions.create':
@@ -178,7 +181,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.claim.get':
     'Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.',
   'missions.claim':
-    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v2.0.',
+    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v3.0.',
   'missions.claim.renew':
     'Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.',
   'missions.claim.release':
@@ -204,11 +207,17 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'runs.listEvidence':
     'List evidence references for a run.',
   'jev.listEvaluations':
-    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is v2.0. See docs/AGENT_USAGE.md v2.0.',
+    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is not implemented yet. See docs/AGENT_USAGE.md v3.0.',
   'jev.getGateStatus':
-    'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is v2.0.',
+    'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is not implemented yet.',
   'missions.planApproval':
     'Record a human plan approval (summary_type=plan_approval) for a mission. Requires the mint-forbidden approvals:human scope. Fails plan_not_open when the mission has no purpose=planning run, self_approval when the approver authored the plan_summary.',
+  'clients.list':
+    'List API clients (clientId, scopes, createdAt, revokedAt — never token hashes). Requires clients:admin; a scoped service client receives forbidden with required=["clients:admin"].',
+  'clients.create':
+    'Create an API client and return its plaintext token ONCE (never retrievable again — store it in a secret manager). Requires clients:admin. Rejects mint-forbidden scopes (clients:admin, verify:admin, approvals:human) with invalid_scopes and an existing clientId with client_exists.',
+  'clients.revoke':
+    'Revoke an API client by clientId (idempotent on the client row; its tokens stop authenticating). Requires clients:admin. Unknown clientId answers not_found.',
 } as const satisfies Record<(typeof CONTRACT_MCP_TOOLS)[number], string>;
 
 export interface ContractInventory {

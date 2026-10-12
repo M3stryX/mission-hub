@@ -4,7 +4,6 @@ import {
   authenticateBearer,
   extractBearerToken,
   hashToken,
-  hasScopes,
   isPrivilegedScope,
   isScope,
   type ClientCredential,
@@ -62,17 +61,88 @@ export async function resolvePrincipal(
   };
 }
 
-export async function requirePrincipal(
+/** HTTP failure an authentication attempt maps to. */
+export type AuthFailure =
+  | { status: 400; body: { error: 'invalid_authorization' } }
+  | { status: 401; body: { error: 'unauthorized' } }
+  | { status: 403; body: { error: 'insufficient_scope'; required: Scope[] } };
+
+export type AuthResult =
+  | { ok: true; principal: Principal }
+  | { ok: false; failure: AuthFailure };
+
+/**
+ * Parse an `Authorization` header, keeping "no credential presented" apart from
+ * "a header that is not a credential". A caller that collapses both into `null`
+ * cannot tell a client whether to present a token or to fix the one it sent.
+ */
+export function parseAuthorizationHeader(
+  authorization: string | undefined,
+): { kind: 'none' } | { kind: 'malformed' } | { kind: 'bearer'; token: string } {
+  const header = authorization?.trim() ?? '';
+  if (header.length === 0) {
+    return { kind: 'none' };
+  }
+
+  const match = /^Bearer (\S+)$/.exec(header);
+  if (!match) {
+    return { kind: 'malformed' };
+  }
+
+  return { kind: 'bearer', token: match[1] };
+}
+
+/**
+ * Authenticate then authorize, preserving *why* a request was refused:
+ *
+ * - `401 unauthorized` — no credential presented, or none of the env clients,
+ *   the admin token, or an active client row matches the token (unknown or
+ *   revoked).
+ * - `400 invalid_authorization` — an `Authorization` header was presented but is
+ *   not a `Bearer <token>` credential.
+ * - `403 insufficient_scope` — the credential is valid but under-scoped;
+ *   `required` names exactly the scopes the route needed.
+ */
+export async function authenticateAndAuthorize(
   authorization: string | undefined,
   store: MissionHubStore,
   options: AuthResolverOptions,
   required: readonly Scope[],
-): Promise<Principal | null> {
-  const principal = await resolvePrincipal(authorization, store, options);
-  if (!principal || !hasScopes(principal, required)) {
-    return null;
+): Promise<AuthResult> {
+  const parsed = parseAuthorizationHeader(authorization);
+  if (parsed.kind === 'malformed') {
+    return {
+      ok: false,
+      failure: { status: 400, body: { error: 'invalid_authorization' } },
+    };
   }
-  return principal;
+  if (parsed.kind === 'none') {
+    return {
+      ok: false,
+      failure: { status: 401, body: { error: 'unauthorized' } },
+    };
+  }
+
+  const principal = await resolvePrincipal(authorization, store, options);
+  if (!principal) {
+    return {
+      ok: false,
+      failure: { status: 401, body: { error: 'unauthorized' } },
+    };
+  }
+
+  const missing = required.filter((scope) => !principal.scopes.has(scope));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      failure: {
+        status: 403,
+        body: { error: 'insufficient_scope', required: missing },
+      },
+    };
+  }
+
+  return { ok: true, principal };
 }
 
 export async function seedEnvClients(
