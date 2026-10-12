@@ -2,9 +2,9 @@
 
 Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL + MCP). This document is the behaviour reference and policy core for autonomous agent workflows against it. It is part of the runtime-agnostic Autonomous Agent Kit; the getting-started guide is §5–§6 of this document, and the role definitions, bootstrap prompt, and runtime adapters live in the sibling kit documents.
 
-**Authority.** Mission Hub state is the single source of truth. [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract revision v2.0) is the contract source of truth; this guide defers to it and never restates contract semantics — where the two disagree, the contract wins. [DOCUMENTED — AGENT_USAGE.md §3, §11]
+**Authority.** Mission Hub state is the single source of truth. [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) (contract revision v3.0) is the contract source of truth; this guide defers to it and never restates contract semantics — where the two disagree, the contract wins. [DOCUMENTED — AGENT_USAGE.md §3, §11]
 
-*Mission Hub 0.1.0 — contract revision 2.0.* The product version is `0.1.0`; `v2.0` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision 3.0.* The product version is `0.1.0`; `v3.0` is the agent contract/schema revision.
 
 **Claim discipline.** Every capability claim below carries one status — **DOCUMENTED** (read in the contract or repo source), **IMPLEMENTED** (present in code and the machine inventory), **RUNTIME_WIRED** (reachable over MCP/REST), **TESTED** (exercised from a client runtime), or **OBSERVED** (executed end-to-end on a live instance) — with its evidence pointer:
 
@@ -14,7 +14,7 @@ Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL
 | [AUDIT B] | Runtime capability matrix, measured from local CLI help and configs (`t_78c7bbb6`) |
 | [AUDIT C] | Prior-art reuse inventory (`t_33655bee`) |
 | [PROOF D] | End-to-end read-only loop + negative tests on a live instance (`t_240eb13e`) |
-| [CONTRACT] | `docs/AGENT_USAGE.md` (contract revision v2.0) or `docs/contract-inventory.json` |
+| [CONTRACT] | `docs/AGENT_USAGE.md` (contract revision v3.0) or `docs/contract-inventory.json` |
 
 Counts in this guide (32 MCP tools, 36 REST routes, 11 scopes, 12 run purposes, 7 summary types, 7 evidence source types) are sourced from `docs/contract-inventory.json`, never from prose. [IMPLEMENTED — contract-inventory.json]
 
@@ -192,9 +192,9 @@ Check work against observed evidence, never against the worker's self-report (§
 
 Error payloads are JSON in `content[0].text` with an `error` code and context fields (e.g. `claim_conflict { missionId, claimId }`). [IMPLEMENTED — `src/mcp/server.ts`]
 
-## 7. Known limitations (contract v2.0)
+## 7. Known limitations (contract v3.0)
 
-These are the honest gaps at contract v2.0. None of them is worked around in this guide.
+These are the honest gaps at contract v3.0. None of them is worked around in this guide.
 
 1. **Plan approval is recorded, not enforced — and currently unreachable.** The `approvals:human` scope is mint-forbidden and dropped from every available auth path, so no credential today can call `missions.planApproval` (observed: MCP `forbidden [approvals:human]`, REST 403). Plan approval is a recorded-intent surface, not an enforced gate. [OBSERVED — PROOF D; AUDIT A]
 2. **The summary surface is unguarded.** `runs.recordSummary` accepts `type = "plan_approval"` with only `summaries:write` — no `approvals:human`, no `plan_not_open`, no `self_approval` guard — so an agent can write a human-approval row through the summary surface. This contradicts the contract sentence "written only through the `approvals:human` endpoint" and is tracked as a separate fix mission. [OBSERVED — PROOF D]

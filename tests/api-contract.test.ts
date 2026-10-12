@@ -77,7 +77,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
           }),
         })
       ).status,
-    ).toBe(401);
+    ).toBe(403);
 
     const created = await app.request('http://localhost/api/v1/admin/clients', {
       method: 'POST',
@@ -669,7 +669,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
           { method: 'DELETE', headers: adminAuth },
         )
       ).status,
-    ).toBe(401);
+    ).toBe(403);
 
     const normalMission = await verifyApp.request(
       'http://localhost/api/v1/missions',

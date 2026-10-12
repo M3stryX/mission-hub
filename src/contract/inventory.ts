@@ -5,7 +5,7 @@
  */
 
 export const AGENT_USAGE_CONTRACT = {
-  version: 'v2.0',
+  version: 'v3.0',
   path: 'docs/AGENT_USAGE.md',
 } as const;
 
@@ -155,7 +155,7 @@ export const CONTRACT_MCP_TOOLS = [
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
 export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.list':
-    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v2.0.',
+    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.0.',
   'missions.get':
     'Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.',
   'missions.create':
@@ -181,7 +181,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.claim.get':
     'Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.',
   'missions.claim':
-    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v2.0.',
+    'Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v3.0.',
   'missions.claim.renew':
     'Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.',
   'missions.claim.release':
@@ -207,9 +207,9 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'runs.listEvidence':
     'List evidence references for a run.',
   'jev.listEvaluations':
-    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is v2.0. See docs/AGENT_USAGE.md v2.0.',
+    'List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is not implemented yet. See docs/AGENT_USAGE.md v3.0.',
   'jev.getGateStatus':
-    'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is v2.0.',
+    'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is not implemented yet.',
   'missions.planApproval':
     'Record a human plan approval (summary_type=plan_approval) for a mission. Requires the mint-forbidden approvals:human scope. Fails plan_not_open when the mission has no purpose=planning run, self_approval when the approver authored the plan_summary.',
   'clients.list':

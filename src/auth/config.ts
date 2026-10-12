@@ -102,15 +102,32 @@ export function loadClientCredentials(
 
   const parsed = JSON.parse(raw) as Record<string, ClientConfigEntry>;
 
-  return Object.entries(parsed).map(([clientId, entry]) => ({
-    clientId,
-    token: entry.token,
-    scopes: new Set(
-      entry.scopes.filter(
-        (scope) => isScope(scope) && !isPrivilegedScope(scope),
-      ),
-    ),
-  }));
+  return Object.entries(parsed).map(([clientId, entry]) => {
+    const scopes = new Set<Scope>();
+    const dropped: string[] = [];
+
+    for (const scope of entry.scopes) {
+      if (!isScope(scope)) {
+        dropped.push(`${scope}(not_a_scope)`);
+        continue;
+      }
+      if (isPrivilegedScope(scope)) {
+        dropped.push(`${scope}(privileged)`);
+        continue;
+      }
+      scopes.add(scope);
+    }
+
+    // A silently dropped scope becomes a 403 hours later, on a credential the
+    // operator believes they configured. Name it once, at boot.
+    if (dropped.length > 0) {
+      console.error(
+        `[mission-hub] client=${clientId} scopes=${scopes.size} dropped=${dropped.join(',')}`,
+      );
+    }
+
+    return { clientId, token: entry.token, scopes };
+  });
 }
 
 export function loadAdminToken(

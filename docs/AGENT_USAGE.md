@@ -1,12 +1,12 @@
 # Mission Hub — Agent Usage Contract
 
-Contract-Version: v2.0 (contract revision)  
+Contract-Version: v3.0 (contract revision)  
 Status: active  
 Applies-to: REST `/api/v1/*` and MCP server `mission-hub`  
 Skill pointer: personal/kit skill `mission-control` v3+ **must defer** to this document  
 Related: CLAIM-01 (#195), USAGE-01 (#196), `docs/contract-inventory.json`, `AGENTS.md`
 
-*Mission Hub 0.1.0 — contract revision 2.0.* The product version is `0.1.0`; `v2.0` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision 3.0.* The product version is `0.1.0`; `v3.0` is the agent contract/schema revision.
 
 English only. Bump `Contract-Version` and `agentUsage.version` in the contract inventory together.
 
@@ -96,6 +96,20 @@ Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidenc
 `clients:admin` = mint/revoke. `verify:admin` = staging-only fixture cleanup.  
 `approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: only an env-issued credential (`MISSION_HUB_CLIENTS_JSON`) can carry it — clients resolved from `api_clients` drop privileged scopes at authentication.
 
+### Refusal contract
+
+A request is refused by *why*, never by a single catch-all status:
+
+| Status | Body | When |
+|--------|------|------|
+| `400` | `{ "error": "invalid_authorization" }` | an `Authorization` header was presented but does not parse as `Bearer <token>` |
+| `401` | `{ "error": "unauthorized" }` | no credential presented, or the token resolves to no env client, no admin token and no active `api_clients` row (unknown or revoked) |
+| `403` | `{ "error": "insufficient_scope", "required": ["<scope>"] }` | the credential resolves and simply lacks what the route needs |
+| `403` | `{ "error": "invalid_host", "host": "<host>" }` | the `Host` header is not on the allowlist (the `/mcp` transport answers the same refusal in its own JSON-RPC envelope) |
+
+`401` therefore means *this credential does not resolve here*. A caller holding a
+valid token is never told to rotate it over a missing scope, and a mangled header
+is named as such instead of being reported as bad credentials.
 ### Client administration over MCP
 
 `clients:admin` reaches both surfaces:
@@ -119,6 +133,12 @@ Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidenc
 
 Destructive verify (`verify:admin` + `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY`) is staging-only — the flag is the only gate, and the deployment environment name does not enable it.
 
+A request whose `Host` is not allowed is refused before any route runs: REST
+answers `403 { "error": "invalid_host", "host": … }`, while `/mcp` answers in the
+MCP transport's own JSON-RPC error envelope. `MISSION_HUB_ALLOWED_HOSTS`
+(comma-separated) replaces the built-in list; a name that is not listed never
+reaches a route.
+
 ## 9. Secrets
 
 Never paste API tokens, Dokploy env dumps, or DB passwords into chat, PRs, or Hindsight. Rotate after any leak. Prefer status-only Dokploy fields when inspecting deploys.
@@ -140,7 +160,7 @@ Reusable skills (e.g. `mission-control`) may teach the workflow but **must not**
 
 ## 12. Lifecycle stages
 
-`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. At contract v2.0 it is part of the REST/MCP mission payload: read from `missions.get` / `missions.list`, set at create, and patchable via `missions.update` (REST + MCP). Stage *transitions* remain unguarded — no code path blocks a run, claim, or stage change yet.
+`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. At contract v3.0 it is part of the REST/MCP mission payload: read from `missions.get` / `missions.list`, set at create, and patchable via `missions.update` (REST + MCP). Stage *transitions* remain unguarded — no code path blocks a run, claim, or stage change yet.
 
 | Stage | Run purpose | Artifact that proves the stage | Gate to the next stage (not yet enforced) |
 |-------|-------------|-------------------------------|-------------------------------------------|
@@ -150,15 +170,15 @@ Reusable skills (e.g. `mission-control`) may teach the workflow but **must not**
 | `execution` | `implementation` (existing) | claim / release rules (existing) | existing claim/release semantics |
 | `done` | — | checklist complete + run `COMPLETED` | — |
 
-contract v2.0 limitations (OQ-7):
+contract v3.0 limitations (OQ-7):
 
 - No code path blocks a run, claim, or stage transition — the stage guards are still to come.
 - `stage` is part of the REST/MCP mission payload from this contract revision (read + write); it adds no new persistence beyond migration `0006`.
 - `mission.status` (business state) stays authoritative and is never derived from `stage`.
 
-## 13. Jev gate (record/read only at contract v2.0)
+## 13. Jev gate (record/read only at contract v3.0)
 
-An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v2.0 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is still to come.
+An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v3.0 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is still to come.
 
 | Surface | Endpoint / tool | Semantics |
 |---------|-----------------|-----------|
@@ -171,9 +191,9 @@ An architecture run records its Jev evaluation as `summary_type = jev_decision` 
 
 Plan-approval rules:
 
-- Scope `approvals:human` is mandatory — `403` without it (`401` when no credential is presented).
-- `401 plan_not_open` when the mission has no `purpose = planning` run yet (draft check only, no stage enforcement).
+- Scope `approvals:human` is mandatory — `403 insufficient_scope` (`required: ["approvals:human"]`) without it; `401` when the credential does not resolve at all (absent, unknown or revoked).
+- `409 plan_not_open` when the mission has no `purpose = planning` run yet (draft check only, no stage enforcement).
 - `409 self_approval` when the caller is the author of that mission's `plan_summary`.
 - `404` for an unknown mission id.
 
-Plan approval is only **recorded** at contract v2.0: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
+Plan approval is only **recorded** at contract v3.0: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
