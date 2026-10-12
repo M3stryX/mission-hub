@@ -292,6 +292,24 @@ describe('Host allowlist middleware', () => {
     });
   });
 
+  it.each(['/', '/health', '/ready', '/api/v1/missions'])(
+    'refuses %s with a REST body, never the MCP transport envelope',
+    async (path) => {
+      setAllowedHostsEnv('hub.example.com');
+
+      const app = createApp({} as MissionHubStore, {});
+      const response = await app.request(`http://127.0.0.1${path}`, {
+        headers: { Host: 'mission-hub.lan' },
+      });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        error: 'invalid_host',
+        host: 'mission-hub.lan',
+      });
+    },
+  );
+
   it('keeps the JSON-RPC refusal envelope on the /mcp transport', async () => {
     setAllowedHostsEnv('hub.example.com');
 
