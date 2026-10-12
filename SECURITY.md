@@ -39,4 +39,7 @@ managed offering. The operator is responsible for:
 
 The `verify:admin` destructive cleanup endpoint is staging-only and gated by
 the `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY` environment variable. It must never
-be enabled in production.
+be enabled in production. That variable is the **only** gate: the code does not
+infer staging from a host name or an environment label, so enabling the flag is
+what permits the endpoint — and leaving it `false` (the default) is what
+refuses it, in every deployment.

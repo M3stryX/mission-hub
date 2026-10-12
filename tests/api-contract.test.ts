@@ -619,7 +619,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     ).toBe(404);
   });
 
-  it('cleans verify fixtures only with verify:admin on staging hosts', async () => {
+  it('cleans verify fixtures only with the switch on, the verify:admin scope and a tagged fixture', async () => {
     const verifyApp = createApp(new MissionHubStore(pool), {
       envCredentials: [
         ...credentials,
@@ -703,38 +703,41 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
           scopes: new Set<Scope>([...allScopes, 'verify:admin']),
         },
       ],
-      allowDestructiveVerify: true,
+      // A production-shaped deployment with the switch off. The environment
+      // name no longer gates this route — the explicit switch is the only
+      // control — so "off" is what must refuse.
+      allowDestructiveVerify: false,
     });
     const prodFixture = await prodApp.request(
-      'http://mission-hub.lan/api/v1/missions',
+      'http://localhost/api/v1/missions',
       {
         method: 'POST',
         headers: {
-          Host: 'mission-hub.lan',
+          Host: 'localhost',
           Authorization: 'Bearer verify-token',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          title: '[VERIFY] prod blocked',
+          title: '[VERIFY] switch off blocked',
           tags: 'mh-runtime-verify',
         }),
       },
     );
     const prodCreated = (await prodFixture.json()) as { mission: { id: number } };
-    expect(
-      (
-        await prodApp.request(
-          `http://mission-hub.lan/api/v1/admin/verify-fixtures/${prodCreated.mission.id}`,
-          {
-            method: 'DELETE',
-            headers: {
-              Host: 'mission-hub.lan',
-              Authorization: 'Bearer verify-token',
-            },
-          },
-        )
-      ).status,
-    ).toBe(403);
+    const refused = await prodApp.request(
+      `http://localhost/api/v1/admin/verify-fixtures/${prodCreated.mission.id}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Host: 'localhost',
+          Authorization: 'Bearer verify-token',
+        },
+      },
+    );
+    expect(refused.status).toBe(403);
+    await expect(refused.json()).resolves.toEqual({
+      error: 'destructive_verify_forbidden',
+    });
   });
 
   it('claims a mission atomically, renews lease, conflicts, expires, and releases', async () => {
@@ -944,7 +947,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       ],
       adminToken,
     });
-    const host = { Host: 'mission-hub.lan' };
+    const host = { Host: 'localhost' };
     const auth = {
       ...host,
       Authorization: 'Bearer contract-token',
