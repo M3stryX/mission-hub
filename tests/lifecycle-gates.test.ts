@@ -64,7 +64,7 @@ const toolErrorOf = (result: ToolOutcome): string | undefined => {
   return (JSON.parse(text) as { error?: string }).error;
 };
 
-describe.skipIf(!databaseUrl)('Lifecycle gates (v2.0) contract', () => {
+describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
   const pool = new Pool({ connectionString: databaseUrl });
   const credentials: ClientCredential[] = [
     {
@@ -189,8 +189,8 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v2.0) contract', () => {
     await pool.end();
   });
 
-  it('publishes the v2.0 lifecycle surface in the contract inventory', () => {
-    expect(AGENT_USAGE_CONTRACT.version).toBe('v2.0');
+  it('publishes the v3.0 lifecycle surface in the contract inventory', () => {
+    expect(AGENT_USAGE_CONTRACT.version).toBe('v3.0');
     expect(CONTRACT_SCOPES).toContain('approvals:human');
     for (const purpose of newPurposes) {
       expect(CONTRACT_ENUMS.run_purpose).toContain(purpose);
@@ -364,7 +364,10 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v2.0) contract', () => {
       },
     );
     expect(noScope.status).toBe(403);
-    expect((await parseBody(noScope)).error).toBe('forbidden');
+    expect(await parseBody(noScope)).toMatchObject({
+      error: 'insufficient_scope',
+      required: ['approvals:human'],
+    });
 
     const unauthenticated = await app.request(
       `http://localhost/api/v1/missions/${missionId}/plan-approval`,
@@ -384,7 +387,7 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v2.0) contract', () => {
         body: JSON.stringify({ content: 'Approved' }),
       },
     );
-    expect(notOpen.status).toBe(401);
+    expect(notOpen.status).toBe(409);
     expect((await parseBody(notOpen)).error).toBe('plan_not_open');
 
     const planRunId = await createRun(missionId, 'planning', 'plan-run');

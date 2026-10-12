@@ -9,9 +9,10 @@ import {
   type Scope,
 } from './auth/config.js';
 import {
-  requirePrincipal,
+  authenticateAndAuthorize,
   resolvePrincipal,
   type AuthResolverOptions,
+  type AuthResult,
 } from './auth/resolve.js';
 import {
   readCommit,
@@ -387,13 +388,33 @@ export function createApp(
     process.env.MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY === 'true';
 
   const app = new Hono();
-  app.use('*', hostHeaderValidation(allowedHostsFor()));
+  // Host policy is a transport decision, so the refusal body follows the
+  // protocol of the route being called: `/mcp` keeps the MCP transport's
+  // JSON-RPC envelope, every REST route answers a REST body. Dressing a REST
+  // refusal in a JSON-RPC envelope hands a REST client an error shape its own
+  // protocol never produces (contract v3.0).
+  app.use('*', async (c, next) => {
+    if (c.req.path === '/mcp') return next();
+    if (isHostAllowed(c.req.header('host'))) return next();
+    return c.json(
+      { error: 'invalid_host', host: requestHost(c.req.header('host')) },
+      403,
+    );
+  });
+  app.use('/mcp', hostHeaderValidation(allowedHostsFor()));
 
-  async function principalFor(
+  /**
+   * Authenticate + authorize, keeping *why* a request was refused: `401` for an
+   * unknown credential, `400` for an unparsable `Authorization` header, and
+   * `403 insufficient_scope` (listing the missing scopes) for a valid but
+   * under-scoped one. Collapsing those into a single `401` tells an integrator
+   * holding a valid token to rotate a secret that is not the problem.
+   */
+  async function principalOr(
     authorization: string | undefined,
     scopes: readonly Scope[],
-  ): Promise<Principal | null> {
-    return requirePrincipal(authorization, store, authOptions, scopes);
+  ): Promise<AuthResult> {
+    return authenticateAndAuthorize(authorization, store, authOptions, scopes);
   }
 
   // Liveness + build identity: which version, contract revision and commit is
@@ -419,18 +440,22 @@ export function createApp(
   });
 
   app.get('/api/v1/admin/clients', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'clients:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     return c.json({ clients: await store.listClients() });
   });
 
   app.post('/api/v1/admin/clients', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'clients:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const parsed = createClientSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     let scopes: Scope[];
@@ -461,19 +486,23 @@ export function createApp(
   });
 
   app.post('/api/v1/admin/clients/:clientId/revoke', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'clients:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const client = await store.revokeClient(c.req.param('clientId'));
     return client ? c.json({ client }) : c.json({ error: 'not_found' }, 404);
   });
 
   app.delete('/api/v1/admin/verify-fixtures/:missionId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'verify:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
 
     // The explicit switch, plus the `verify:admin` scope checked above, is the
     // whole gate. The deployment environment deliberately does not enter this
@@ -506,18 +535,22 @@ export function createApp(
   });
 
   app.get('/api/v1/missions', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     return c.json({ missions: await store.listMissions(c.req.query('q')) });
   });
 
   app.get('/api/v1/missions/:id', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const id = parseId(c.req.param('id'));
     if (!id) return c.json({ error: 'invalid_id' }, 400);
     const mission = await store.getMission(id);
@@ -525,10 +558,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const parsed = createMissionSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     const mission = await store.createMission(parsed.data, principal.clientId);
@@ -536,10 +572,13 @@ export function createApp(
   });
 
   app.patch('/api/v1/missions/:id', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const id = parseId(c.req.param('id'));
     if (!id) return c.json({ error: 'invalid_id' }, 400);
     const parsed = updateMissionSchema.safeParse(await c.req.json());
@@ -553,10 +592,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/checklist', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -566,10 +607,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions/:id/checklist', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = checklistCreateSchema.safeParse(await c.req.json());
@@ -584,10 +628,13 @@ export function createApp(
   });
 
   app.patch('/api/v1/missions/:id/checklist/:itemId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     const itemId = parseId(c.req.param('itemId'));
     if (!missionId || !itemId) return c.json({ error: 'invalid_id' }, 400);
@@ -610,10 +657,13 @@ export function createApp(
   });
 
   app.delete('/api/v1/missions/:id/checklist/:itemId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     const itemId = parseId(c.req.param('itemId'));
     if (!missionId || !itemId) return c.json({ error: 'invalid_id' }, 400);
@@ -626,10 +676,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/sources', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -639,10 +691,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions/:id/sources', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = sourceCreateSchema.safeParse(await c.req.json());
@@ -665,10 +720,13 @@ export function createApp(
   });
 
   app.delete('/api/v1/missions/:id/sources/:sourceId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     const sourceId = parseId(c.req.param('sourceId'));
     if (!missionId || !sourceId) return c.json({ error: 'invalid_id' }, 400);
@@ -681,10 +739,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/events', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -694,10 +754,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/claim', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -707,10 +769,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions/:id/claim', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = claimMissionSchema.safeParse(await c.req.json());
@@ -739,10 +804,13 @@ export function createApp(
   });
 
   app.post('/api/v1/claims/:claimId/renew', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const claimId = parseId(c.req.param('claimId'));
     if (!claimId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = renewClaimSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -772,10 +840,13 @@ export function createApp(
   });
 
   app.post('/api/v1/claims/:claimId/release', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const claimId = parseId(c.req.param('claimId'));
     if (!claimId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = releaseClaimSchema.safeParse(await c.req.json());
@@ -825,10 +896,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/runs', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const purposeRaw = c.req.query('purpose');
@@ -845,11 +918,13 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/research-reports', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({
@@ -858,11 +933,13 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/research-report', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({
@@ -871,11 +948,13 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/jev-evaluations', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const checkpoint = c.req.query('checkpoint') || undefined;
@@ -888,24 +967,24 @@ export function createApp(
   });
 
   app.get('/api/v1/jev-gate', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     return c.json({ evaluations: await store.listJevEvaluations() });
   });
 
   app.post('/api/v1/missions/:id/plan-approval', async (c) => {
-    const principal = await resolvePrincipal(
-      c.req.header('authorization'),
-      store,
-      authOptions,
-    );
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
-    if (!principal.scopes.has('approvals:human')) {
-      return c.json({ error: 'forbidden', required: ['approvals:human'] }, 403);
+    const auth = await principalOr(c.req.header('authorization'), [
+      'approvals:human',
+    ]);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
     }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = planApprovalSchema.safeParse(await c.req.json());
@@ -922,7 +1001,7 @@ export function createApp(
         : c.json({ error: 'not_found' }, 404);
     } catch (error) {
       if (error instanceof PlanNotOpenError) {
-        return c.json({ error: 'plan_not_open', missionId }, 401);
+        return c.json({ error: 'plan_not_open', missionId }, 409);
       }
       if (error instanceof SelfApprovalError) {
         return c.json({ error: 'self_approval', missionId }, 409);
@@ -932,10 +1011,13 @@ export function createApp(
   });
 
   app.post('/api/v1/runs', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const parsed = createRunSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     const run = await store.createRun(parsed.data, principal.clientId);
@@ -943,10 +1025,13 @@ export function createApp(
   });
 
   app.patch('/api/v1/runs/:id/status', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = updateRunStatusSchema.safeParse(await c.req.json());
@@ -975,20 +1060,25 @@ export function createApp(
   });
 
   app.get('/api/v1/runs/:id/events', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({ events: await store.listRunEvents(runId) });
   });
 
   app.post('/api/v1/runs/:id/summaries', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'summaries:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = summarySchema.safeParse(await c.req.json());
@@ -1018,10 +1108,12 @@ export function createApp(
   });
 
   app.get('/api/v1/runs/:id/summaries', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const typeRaw = c.req.query('type');
@@ -1038,10 +1130,13 @@ export function createApp(
   });
 
   app.post('/api/v1/runs/:id/evidence', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'evidence:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = evidenceSchema.safeParse(await c.req.json());
@@ -1072,10 +1167,12 @@ export function createApp(
   });
 
   app.get('/api/v1/runs/:id/evidence', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'evidence:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({ evidence: await store.listEvidence(runId) });
