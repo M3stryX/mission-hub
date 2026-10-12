@@ -243,8 +243,20 @@ export type CreateAppOptions = AuthResolverOptions & {
   allowDestructiveVerify?: boolean;
 };
 
-function hasServiceScope(principal: Principal): boolean {
-  return ALL_SERVICE_SCOPES.some((scope) => principal.scopes.has(scope));
+/**
+ * Whether a principal may open the MCP surface (`ALL /mcp`).
+ *
+ * Service clients qualify through their service scopes. The bootstrap admin
+ * principal carries only `clients:admin` — never a service scope — so it is
+ * admitted explicitly: without this, a token authenticated as admin would be
+ * rejected by `/mcp` and the `clients.*` tools would be unreachable, leaving
+ * client administration REST-only.
+ */
+function canUseMcpSurface(principal: Principal): boolean {
+  return (
+    ALL_SERVICE_SCOPES.some((scope) => principal.scopes.has(scope)) ||
+    principal.scopes.has('clients:admin')
+  );
 }
 
 function requestHost(header: string | undefined): string {
@@ -1087,7 +1099,7 @@ export function createApp(
       store,
       authOptions,
     );
-    if (!principal || !hasServiceScope(principal)) {
+    if (!principal || !canUseMcpSurface(principal)) {
       return c.json({ error: 'unauthorized' }, 401);
     }
 
