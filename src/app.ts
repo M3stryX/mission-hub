@@ -214,29 +214,18 @@ const sourceCreateSchema = z.object({
   kind: z.enum(['doc', 'link']),
 });
 
-const STAGING_HOSTS = new Set([
-  'mission-hub-staging.lan',
-  'mission-staging.lan',
-  'mission-hub-staging.mestryx.dev',
-  'localhost',
-  '127.0.0.1',
-]);
-
-const PROD_HOSTS = new Set(['mission-hub.lan', 'mission.lan']);
-
 /**
  * Built-in Host allowlist used when `MISSION_HUB_ALLOWED_HOSTS` is not set.
+ *
+ * Loopback only, on purpose: the code carries no deployment topology, so a new
+ * or renamed host never requires a code change or a release. A deployed stage
+ * declares the names it answers on through `MISSION_HUB_ALLOWED_HOSTS` and
+ * refuses to boot without them (see `assertHostAllowlistConfigured`).
  * Matching is exact (one entry per hostname) — no wildcard, no regex.
  */
 export const DEFAULT_ALLOWED_HOSTS: readonly string[] = [
   'localhost',
   '127.0.0.1',
-  'mission.lan',
-  'mission-staging.lan',
-  'mission-hub-staging.lan',
-  'mission-hub.lan',
-  'mission-hub-staging.mestryx.dev',
-  'agora-mission.lan',
 ];
 
 function parseId(value: string): number | null {
@@ -246,6 +235,7 @@ function parseId(value: string): number | null {
 
 export type CreateAppOptions = AuthResolverOptions & {
   allowDestructiveVerify?: boolean;
+  stage?: MissionHubStage;
 };
 
 function hasServiceScope(principal: Principal): boolean {
@@ -261,7 +251,7 @@ function requestHost(header: string | undefined): string {
  *
  * `MISSION_HUB_ALLOWED_HOSTS` is a comma-separated list of hostnames: each entry
  * is trimmed and empty entries are dropped. When the variable is unset, the
- * built-in default list applies (which includes `agora-mission.lan`).
+ * built-in default applies: loopback only, which suits local development.
  * A defined-but-empty variable therefore yields an empty allowlist.
  */
 export function getAllowedHosts(
@@ -288,6 +278,53 @@ export function isHostAllowed(
   return getAllowedHosts(env).includes(normalized);
 }
 
+/**
+ * Deployment stage, from `MISSION_HUB_STAGE`.
+ *
+ * Anything else — unset, misspelled, mixed case — resolves to `development`,
+ * so a missing variable never implies a production capability.
+ */
+export type MissionHubStage = 'development' | 'staging' | 'production';
+
+export function getStage(
+  env: Record<string, string | undefined> = process.env,
+): MissionHubStage {
+  const value = (env.MISSION_HUB_STAGE ?? '').trim().toLowerCase();
+  return value === 'staging' || value === 'production' ? value : 'development';
+}
+
+/**
+ * A deployed stage must declare the Host names it answers on.
+ *
+ * With the loopback-only default, an unset or empty `MISSION_HUB_ALLOWED_HOSTS`
+ * would make the deployment boot normally and then refuse every real request
+ * with `403` — an outage disguised as a client error. Failing at boot instead
+ * makes the misconfiguration loud and immediate.
+ */
+export function assertHostAllowlistConfigured(
+  env: Record<string, string | undefined> = process.env,
+): void {
+  const stage = getStage(env);
+  if (stage === 'development') return;
+
+  if (env.MISSION_HUB_ALLOWED_HOSTS === undefined) {
+    throw new Error(
+      `MISSION_HUB_ALLOWED_HOSTS must be set when MISSION_HUB_STAGE=${stage}: ` +
+        'the built-in default is loopback only, so the deployment would refuse ' +
+        'every request with 403. Set it to the host names this deployment is ' +
+        'served on (comma-separated).',
+    );
+  }
+
+  const hosts = getAllowedHosts(env);
+  if (hosts.length === 0) {
+    throw new Error(
+      `MISSION_HUB_ALLOWED_HOSTS resolves to an empty allowlist (stage ${stage}): ` +
+        'every request would be refused with 403. List at least one host name.',
+    );
+  }
+}
+
 export function createApp(
   store: MissionHubStore,
   options: CreateAppOptions = {},
@@ -296,6 +333,7 @@ export function createApp(
   const allowDestructiveVerify =
     options.allowDestructiveVerify ??
     process.env.MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY === 'true';
+  const stage = options.stage ?? getStage();
 
   const app = new Hono();
   app.use('*', hostHeaderValidation(getAllowedHosts()));
@@ -375,12 +413,11 @@ export function createApp(
     ]);
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
 
-    const host = requestHost(c.req.header('host'));
-    if (PROD_HOSTS.has(host) || !allowDestructiveVerify) {
+    if (stage === 'production' || !allowDestructiveVerify) {
       return c.json({ error: 'destructive_verify_forbidden' }, 403);
     }
-    if (!STAGING_HOSTS.has(host)) {
-      return c.json({ error: 'destructive_verify_host_forbidden' }, 403);
+    if (stage !== 'staging') {
+      return c.json({ error: 'destructive_verify_not_staging' }, 403);
     }
 
     const missionId = parseId(c.req.param('missionId'));

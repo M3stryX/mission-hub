@@ -619,7 +619,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     ).toBe(404);
   });
 
-  it('cleans verify fixtures only with verify:admin on staging hosts', async () => {
+  it('cleans verify fixtures only with verify:admin in the staging stage', async () => {
     const verifyApp = createApp(new MissionHubStore(pool), {
       envCredentials: [
         ...credentials,
@@ -631,6 +631,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       ],
       adminToken,
       allowDestructiveVerify: true,
+      stage: 'staging',
     });
     const verifyAuth = {
       ...host,
@@ -704,13 +705,14 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
         },
       ],
       allowDestructiveVerify: true,
+      stage: 'production',
     });
     const prodFixture = await prodApp.request(
-      'http://mission-hub.lan/api/v1/missions',
+      'http://localhost/api/v1/missions',
       {
         method: 'POST',
         headers: {
-          Host: 'mission-hub.lan',
+          Host: 'localhost',
           Authorization: 'Bearer verify-token',
           'Content-Type': 'application/json',
         },
@@ -724,11 +726,11 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
     expect(
       (
         await prodApp.request(
-          `http://mission-hub.lan/api/v1/admin/verify-fixtures/${prodCreated.mission.id}`,
+          `http://localhost/api/v1/admin/verify-fixtures/${prodCreated.mission.id}`,
           {
             method: 'DELETE',
             headers: {
-              Host: 'mission-hub.lan',
+              Host: 'localhost',
               Authorization: 'Bearer verify-token',
             },
           },
@@ -944,7 +946,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       ],
       adminToken,
     });
-    const host = { Host: 'mission-hub.lan' };
+    const host = { Host: 'localhost' };
     const auth = {
       ...host,
       Authorization: 'Bearer contract-token',

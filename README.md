@@ -43,7 +43,7 @@ pnpm start
 
 Where the configuration comes from: `pnpm dev`, `pnpm start` and `pnpm clients` load `.env`; `pnpm db:migrate` and `pnpm legacy:import` read `DATABASE_URL` from the process environment; `pnpm legacy:export` takes its paths as arguments. Migrations also run automatically on boot, so the explicit migration step is only needed to prepare a database without starting the server.
 
-The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`: a request carrying any other `Host` header is refused with `403`.
+The server answers only on the host names listed in `MISSION_HUB_ALLOWED_HOSTS`: a request carrying any other `Host` header is refused with `403`. The built-in default is loopback only (`localhost`, `127.0.0.1`), so every deployed stage sets the variable — and refuses to boot without it.
 
 ### 2. Docker image
 
@@ -78,7 +78,8 @@ Deployment is branch-driven (`feature/* → dev → staging → main`, see Contr
 
 - `DATABASE_URL` — that application's PostgreSQL database.
 - `MISSION_HUB_ADMIN_TOKEN` — a distinct bootstrap admin Bearer per application.
-- `MISSION_HUB_ALLOWED_HOSTS` — the host names the application must answer on (its public domain and internal name), otherwise requests are refused with `403`.
+- `MISSION_HUB_ALLOWED_HOSTS` — the host names the application must answer on (its public domain and internal name), otherwise requests are refused with `403`. Required outside development: a stage that leaves it unset refuses to boot.
+- `MISSION_HUB_STAGE` — `staging` or `production` for a deployed application; leave it unset for local work.
 - `MISSION_HUB_CLIENTS_JSON` — optional seeded clients.
 - `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY` — must stay `false` outside staging.
 
@@ -93,10 +94,11 @@ Environment variables (see `.env.example`; the committed values are placeholders
 | `DATABASE_URL` | — (required) | PostgreSQL connection string. The server, `pnpm db:migrate` and the legacy tooling fail fast without it. |
 | `PORT` | `3000` | HTTP listen port. |
 | `HOST` | `0.0.0.0` | HTTP bind address. |
-| `MISSION_HUB_ALLOWED_HOSTS` | built-in default list (see `.env.example`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. Unset → the built-in default list (which includes `agora-mission.lan`); defined-but-empty → empty allowlist. Any other host is answered with `403`. No wildcards, no regex. |
+| `MISSION_HUB_ALLOWED_HOSTS` | loopback only (`localhost`, `127.0.0.1`) | Comma-separated exact host names accepted in the `Host` header; entries are trimmed, empty ones dropped, ports ignored. The code ships **no deployment topology**: a deployed stage sets this variable to the names it is served on, and the server refuses to boot when a non-development stage leaves it unset or empty. Any other host is answered with `403`. No wildcards, no regex. |
+| `MISSION_HUB_STAGE` | `development` | `staging` or `production` for a deployed application; any other value (including unset) is `development`. Decides whether the Host allowlist is mandatory at boot and whether `DELETE /api/v1/admin/verify-fixtures/:missionId` is reachable. |
 | `MISSION_HUB_ADMIN_TOKEN` | — | Bootstrap admin Bearer for `/api/v1/admin/clients` (create/list/revoke). Never grant it to a service client. |
 | `MISSION_HUB_CLIENTS_JSON` | — | Optional seed/fallback clients, upserted hashed on boot. `verify:admin` can only be seeded this way — it cannot be minted through the admin API. |
-| `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY` | `false` | Staging-only: enable `DELETE /api/v1/admin/verify-fixtures/:missionId` (requires the `verify:admin` scope and a staging host). |
+| `MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY` | `false` | Staging-only: enable `DELETE /api/v1/admin/verify-fixtures/:missionId` (requires the `verify:admin` scope and `MISSION_HUB_STAGE=staging`). |
 
 Admin clients are minted with `pnpm clients create <clientId> --scopes <scope,scope>`, listed with `pnpm clients list` and revoked with `pnpm clients revoke <clientId>`; the same operations exist as `POST`, `GET` and `POST /api/v1/admin/clients/:clientId/revoke`. The privileged `approvals:human` and `verify:admin` scopes cannot be minted through the admin API.
 

@@ -1,7 +1,12 @@
 import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Pool } from 'pg';
-import { createApp } from './app.js';
+import {
+  assertHostAllowlistConfigured,
+  createApp,
+  getAllowedHosts,
+  getStage,
+} from './app.js';
 import {
   loadAdminToken,
   loadClientCredentials,
@@ -9,6 +14,13 @@ import {
 import { seedEnvClients } from './auth/resolve.js';
 import { runMigrations } from './db/migrate.js';
 import { MissionHubStore } from './db/store.js';
+
+// Fail fast on a misconfigured deployment: outside development the Host
+// allowlist must be declared, otherwise every request would be refused with 403.
+assertHostAllowlistConfigured();
+console.error(
+  `[mission-hub] stage=${getStage()} allowed_hosts=${getAllowedHosts().length}`,
+);
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
