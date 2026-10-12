@@ -11,6 +11,17 @@ import { runMigrations } from './db/migrate.js';
 import { MissionHubStore } from './db/store.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// A pooled connection can die while it sits idle (database restart, failover,
+// admin `pg_terminate_backend`, network reset). pg emits `error` on the pool for
+// those clients; with no listener Node treats it as an unhandled `error` event
+// and kills the process, so the HTTP surface disappears instead of degrading.
+// Log it and keep the process alive: affected clients are discarded by the pool
+// and the next query opens a fresh connection, so /ready can answer 503.
+pool.on('error', (error) => {
+  console.error('[mission-hub] idle pool client error:', error.message);
+});
+
 await runMigrations(pool);
 
 const store = new MissionHubStore(pool);
