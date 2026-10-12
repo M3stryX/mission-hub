@@ -224,6 +224,21 @@ const STAGING_HOSTS = new Set([
 
 const PROD_HOSTS = new Set(['mission-hub.lan', 'mission.lan']);
 
+/**
+ * Built-in Host allowlist used when `MISSION_HUB_ALLOWED_HOSTS` is not set.
+ * Matching is exact (one entry per hostname) — no wildcard, no regex.
+ */
+export const DEFAULT_ALLOWED_HOSTS: readonly string[] = [
+  'localhost',
+  '127.0.0.1',
+  'mission.lan',
+  'mission-staging.lan',
+  'mission-hub-staging.lan',
+  'mission-hub.lan',
+  'mission-hub-staging.mestryx.dev',
+  'agora-mission.lan',
+];
+
 function parseId(value: string): number | null {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -241,6 +256,38 @@ function requestHost(header: string | undefined): string {
   return (header ?? '').split(':')[0].trim().toLowerCase();
 }
 
+/**
+ * Resolves the request Host allowlist from the environment.
+ *
+ * `MISSION_HUB_ALLOWED_HOSTS` is a comma-separated list of hostnames: each entry
+ * is trimmed and empty entries are dropped. When the variable is unset, the
+ * built-in default list applies (which includes `agora-mission.lan`).
+ * A defined-but-empty variable therefore yields an empty allowlist.
+ */
+export function getAllowedHosts(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const configured = env.MISSION_HUB_ALLOWED_HOSTS;
+  if (configured === undefined) return [...DEFAULT_ALLOWED_HOSTS];
+  return configured
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Exact (non wildcard) Host allowlist check. The incoming header is normalized
+ * the same way as the request middleware: port stripped, trimmed, lowercased.
+ */
+export function isHostAllowed(
+  host: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const normalized = requestHost(host);
+  if (normalized.length === 0) return false;
+  return getAllowedHosts(env).includes(normalized);
+}
+
 export function createApp(
   store: MissionHubStore,
   options: CreateAppOptions = {},
@@ -251,18 +298,7 @@ export function createApp(
     process.env.MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY === 'true';
 
   const app = new Hono();
-  app.use(
-    '*',
-    hostHeaderValidation([
-      'localhost',
-      '127.0.0.1',
-      'mission.lan',
-      'mission-staging.lan',
-      'mission-hub-staging.lan',
-      'mission-hub.lan',
-      'mission-hub-staging.mestryx.dev',
-    ]),
-  );
+  app.use('*', hostHeaderValidation(getAllowedHosts()));
 
   async function principalFor(
     authorization: string | undefined,
