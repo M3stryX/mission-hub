@@ -96,6 +96,20 @@ Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidenc
 `clients:admin` = mint/revoke. `verify:admin` = staging-only fixture cleanup.  
 `approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: only an env-issued credential (`MISSION_HUB_CLIENTS_JSON`) can carry it — clients resolved from `api_clients` drop privileged scopes at authentication.
 
+### Client administration over MCP
+
+`clients:admin` reaches both surfaces:
+
+| Surface | Create | List | Revoke |
+|---------|--------|------|--------|
+| REST | `POST /api/v1/admin/clients` | `GET /api/v1/admin/clients` | `POST /api/v1/admin/clients/:clientId/revoke` |
+| MCP | `clients.create(clientId, scopes)` | `clients.list()` | `clients.revoke(clientId)` |
+
+- The bootstrap admin token (`MISSION_HUB_ADMIN_TOKEN`, documented in `.env.example`) is the credential for these calls. It carries only `clients:admin`, so `/mcp` admits it explicitly for this surface; every other token still needs a service scope to open `/mcp`.
+- A scoped service client **always** receives `forbidden` with `required: ["clients:admin"]` on all three tools — the tools stay listed (no hidden surface) so an agent can discover and report the missing scope.
+- `clients.create` returns the plaintext token **once**; the server stores only its hash. Never paste that value into chat, a commit, or Hindsight — the same rule as §9. Store it in the consuming secret manager.
+- Mint-forbidden scopes (`clients:admin`, `verify:admin`, `approvals:human`) are rejected with `invalid_scopes`; an existing `clientId` answers `client_exists`. `clients.revoke` on an unknown id answers `not_found`, and a revoked client's tokens stop authenticating.
+
 ## 8. Hosts
 
 | Env | Host |
