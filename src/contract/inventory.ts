@@ -147,6 +147,9 @@ export const CONTRACT_MCP_TOOLS = [
   'jev.listEvaluations',
   'jev.getGateStatus',
   'missions.planApproval',
+  'clients.list',
+  'clients.create',
+  'clients.revoke',
 ] as const;
 
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
@@ -209,6 +212,12 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
     'List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is not implemented yet.',
   'missions.planApproval':
     'Record a human plan approval (summary_type=plan_approval) for a mission. Requires the mint-forbidden approvals:human scope. Fails plan_not_open when the mission has no purpose=planning run, self_approval when the approver authored the plan_summary.',
+  'clients.list':
+    'List API clients (clientId, scopes, createdAt, revokedAt — never token hashes). Requires clients:admin; a scoped service client receives forbidden with required=["clients:admin"].',
+  'clients.create':
+    'Create an API client and return its plaintext token ONCE (never retrievable again — store it in a secret manager). Requires clients:admin. Rejects mint-forbidden scopes (clients:admin, verify:admin, approvals:human) with invalid_scopes and an existing clientId with client_exists.',
+  'clients.revoke':
+    'Revoke an API client by clientId (idempotent on the client row; its tokens stop authenticating). Requires clients:admin. Unknown clientId answers not_found.',
 } as const satisfies Record<(typeof CONTRACT_MCP_TOOLS)[number], string>;
 
 export interface ContractInventory {

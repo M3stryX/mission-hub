@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Boot diagnostics** — the process prints one startup line naming the
+  configuration it is actually running with
+  (`env=… allowed_hosts=… db=host:port/dbname`), and the initial migration run
+  is retried inside a bounded window (`MISSION_HUB_DB_RETRY_WINDOW_MS`, default
+  25s) so a database that starts *after* the application no longer kills it.
+  When the window is exhausted the process exits `1` behind a single
+  `fatal: migrations failed: <cause>: <host>:<port>/<dbname>` line. No
+  credential ever reaches the log.
+
+### Changed
+
+- **Boot line names the host allowlist instead of counting it** —
+  `allowed_hosts=2` becomes `allowed_hosts=mission-hub.lan,…`, and the database
+  target is added to the same line.
 ## [3.0.0] - 2026-10-12
 
 ### Changed

@@ -110,6 +110,19 @@ A request is refused by *why*, never by a single catch-all status:
 `401` therefore means *this credential does not resolve here*. A caller holding a
 valid token is never told to rotate it over a missing scope, and a mangled header
 is named as such instead of being reported as bad credentials.
+### Client administration over MCP
+
+`clients:admin` reaches both surfaces:
+
+| Surface | Create | List | Revoke |
+|---------|--------|------|--------|
+| REST | `POST /api/v1/admin/clients` | `GET /api/v1/admin/clients` | `POST /api/v1/admin/clients/:clientId/revoke` |
+| MCP | `clients.create(clientId, scopes)` | `clients.list()` | `clients.revoke(clientId)` |
+
+- The bootstrap admin token (`MISSION_HUB_ADMIN_TOKEN`, documented in `.env.example`) is the credential for these calls. It carries only `clients:admin`, so `/mcp` admits it explicitly for this surface; every other token still needs a service scope to open `/mcp`.
+- A scoped service client **always** receives `forbidden` with `required: ["clients:admin"]` on all three tools — the tools stay listed (no hidden surface) so an agent can discover and report the missing scope.
+- `clients.create` returns the plaintext token **once**; the server stores only its hash. Never paste that value into chat, a commit, or Hindsight — the same rule as §9. Store it in the consuming secret manager.
+- Mint-forbidden scopes (`clients:admin`, `verify:admin`, `approvals:human`) are rejected with `invalid_scopes`; an existing `clientId` answers `client_exists`. `clients.revoke` on an unknown id answers `not_found`, and a revoked client's tokens stop authenticating.
 
 ## 8. Hosts
 

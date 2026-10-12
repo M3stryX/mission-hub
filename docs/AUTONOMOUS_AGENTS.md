@@ -16,7 +16,7 @@ Mission Hub is a standalone mission + execution-trace service (Hono + PostgreSQL
 | [PROOF D] | End-to-end read-only loop + negative tests on a live instance (`t_240eb13e`) |
 | [CONTRACT] | `docs/AGENT_USAGE.md` (contract revision v3.0) or `docs/contract-inventory.json` |
 
-Counts in this guide (29 MCP tools, 36 REST routes, 11 scopes, 12 run purposes, 7 summary types, 7 evidence source types) are sourced from `docs/contract-inventory.json`, never from prose. [IMPLEMENTED — contract-inventory.json]
+Counts in this guide (32 MCP tools, 36 REST routes, 11 scopes, 12 run purposes, 7 summary types, 7 evidence source types) are sourced from `docs/contract-inventory.json`, never from prose. [IMPLEMENTED — contract-inventory.json]
 
 ---
 
@@ -25,7 +25,7 @@ Counts in this guide (29 MCP tools, 36 REST routes, 11 scopes, 12 run purposes, 
 1. **Mission Hub is the operational SSOT** for missions, claims, runs, checklist, sources, events, summaries, and evidence. [DOCUMENTED — AGENT_USAGE.md §3]
 2. **No parallel backlog, lock table, or competing contract.** n8n is a dispatcher/integration layer, not the claim store; Hindsight is memory, not operational state; Kanban is the ephemeral *how* (agent cards), while a Mission is the durable *why*. [DOCUMENTED — AGENT_USAGE.md §3]
 3. **Business state is not a lock.** `mission.status` (`backlog`…`done`/`blocked`) is durable goal state only; temporary exclusive ownership lives in `mission_claims` with lease expiry. Never substitute `status = in_progress` for a claim. [DOCUMENTED — AGENT_USAGE.md §2; OBSERVED — PROOF D: a read-only loop ran under a claim while the mission status stayed `done`]
-4. **Every agent-facing write exists on both surfaces** (REST `/api/v1/*` and the `mission-hub` MCP server) unless the contract documents otherwise. [DOCUMENTED — AGENT_USAGE.md architecture rules; IMPLEMENTED — 29 MCP tools, 36 REST routes]
+4. **Every agent-facing write exists on both surfaces** (REST `/api/v1/*` and the `mission-hub` MCP server) unless the contract documents otherwise. [DOCUMENTED — AGENT_USAGE.md architecture rules; IMPLEMENTED — 32 MCP tools, 36 REST routes]
 
 ## 2. Architecture and behaviour
 
@@ -109,7 +109,7 @@ Per-stage run purposes and proof artifacts stay the contract's to define: [`docs
 
 ### Connect (MCP)
 
-The MCP server `mission-hub` is served at the streamable-HTTP endpoint `/mcp` — one endpoint, all 29 tools. Authenticate with a Bearer token held in an environment variable, never inline in prompts or commits:
+The MCP server `mission-hub` is served at the streamable-HTTP endpoint `/mcp` — one endpoint, all 32 tools. Authenticate with a Bearer token held in an environment variable, never inline in prompts or commits:
 
 ```bash
 curl -N http://<HOST>:3000/mcp \
@@ -127,7 +127,7 @@ Confirm the surfaces before planning work. Counts come from the machine inventor
 
 | Surface | Count | Source of truth |
 |---------|-------|-----------------|
-| MCP tools | **29** | `registerTool(` in `src/mcp/server.ts` |
+| MCP tools | **32** | `registerTool(` in `src/mcp/server.ts` |
 | HTTP routes | **36** | `src/app.ts` — 33 REST under `/api/v1`, plus `/health`, `/ready`, `/mcp` |
 | Scopes | **11** | `src/auth/config.ts` |
 | Run purposes | **12** | `docs/contract-inventory.json` |
