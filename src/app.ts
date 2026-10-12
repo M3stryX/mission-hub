@@ -218,9 +218,10 @@ const sourceCreateSchema = z.object({
  * Built-in Host allowlist used when `MISSION_HUB_ALLOWED_HOSTS` is not set.
  *
  * Loopback only, on purpose: the code carries no deployment topology, so a new
- * or renamed host never requires a code change or a release. A deployed stage
- * declares the names it answers on through `MISSION_HUB_ALLOWED_HOSTS` and
- * refuses to boot without them (see `assertHostAllowlistConfigured`).
+ * or renamed host never requires a code change or a release. A deployed
+ * environment declares the names it answers on through
+ * `MISSION_HUB_ALLOWED_HOSTS` and refuses to boot without them (see
+ * `assertHostAllowlistConfigured`).
  * Matching is exact (one entry per hostname) — no wildcard, no regex.
  */
 export const DEFAULT_ALLOWED_HOSTS: readonly string[] = [
@@ -235,7 +236,6 @@ function parseId(value: string): number | null {
 
 export type CreateAppOptions = AuthResolverOptions & {
   allowDestructiveVerify?: boolean;
-  stage?: MissionHubStage;
 };
 
 function hasServiceScope(principal: Principal): boolean {
@@ -279,22 +279,44 @@ export function isHostAllowed(
 }
 
 /**
- * Deployment stage, from `MISSION_HUB_STAGE`.
+ * Deployment environment, from `MISSION_HUB_ENV` — the conventional `*_ENV`
+ * name (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`).
  *
- * Anything else — unset, misspelled, mixed case — resolves to `development`,
- * so a missing variable never implies a production capability.
+ * Unset or blank means `development`. An unrecognized value — a misspelled
+ * `prod`, a stray `production-eu` — is a configuration error and throws: the
+ * whole point of this variable is to name the deployment, so silently
+ * degrading it to `development` would hide exactly the mistake it exists to
+ * catch.
+ *
+ * This is a label and a boot policy, never a capability. It decides whether
+ * the Host allowlist is mandatory at boot; it gates no route (the
+ * destructive-verify switch is a separate, explicit, orthogonal flag).
  */
-export type MissionHubStage = 'development' | 'staging' | 'production';
+export type MissionHubEnv = 'development' | 'staging' | 'production';
 
-export function getStage(
+export const DEPLOYMENT_ENVS: readonly MissionHubEnv[] = [
+  'development',
+  'staging',
+  'production',
+];
+
+export function getEnv(
   env: Record<string, string | undefined> = process.env,
-): MissionHubStage {
-  const value = (env.MISSION_HUB_STAGE ?? '').trim().toLowerCase();
-  return value === 'staging' || value === 'production' ? value : 'development';
+): MissionHubEnv {
+  const value = (env.MISSION_HUB_ENV ?? '').trim().toLowerCase();
+  if (value.length === 0) return 'development';
+  if ((DEPLOYMENT_ENVS as readonly string[]).includes(value)) {
+    return value as MissionHubEnv;
+  }
+  throw new Error(
+    `MISSION_HUB_ENV="${env.MISSION_HUB_ENV}" is not a valid environment. ` +
+      `Expected one of ${DEPLOYMENT_ENVS.join(', ')}, or unset for development. ` +
+      'Refusing to start rather than guess which environment this is.',
+  );
 }
 
 /**
- * A deployed stage must declare the Host names it answers on.
+ * A deployed environment must declare the Host names it answers on.
  *
  * With the loopback-only default, an unset or empty `MISSION_HUB_ALLOWED_HOSTS`
  * would make the deployment boot normally and then refuse every real request
@@ -304,12 +326,12 @@ export function getStage(
 export function assertHostAllowlistConfigured(
   env: Record<string, string | undefined> = process.env,
 ): void {
-  const stage = getStage(env);
-  if (stage === 'development') return;
+  const deploymentEnv = getEnv(env);
+  if (deploymentEnv === 'development') return;
 
   if (env.MISSION_HUB_ALLOWED_HOSTS === undefined) {
     throw new Error(
-      `MISSION_HUB_ALLOWED_HOSTS must be set when MISSION_HUB_STAGE=${stage}: ` +
+      `MISSION_HUB_ALLOWED_HOSTS must be set when MISSION_HUB_ENV=${deploymentEnv}: ` +
         'the built-in default is loopback only, so the deployment would refuse ' +
         'every request with 403. Set it to the host names this deployment is ' +
         'served on (comma-separated).',
@@ -319,8 +341,9 @@ export function assertHostAllowlistConfigured(
   const hosts = getAllowedHosts(env);
   if (hosts.length === 0) {
     throw new Error(
-      `MISSION_HUB_ALLOWED_HOSTS resolves to an empty allowlist (stage ${stage}): ` +
-        'every request would be refused with 403. List at least one host name.',
+      `MISSION_HUB_ALLOWED_HOSTS resolves to an empty allowlist ` +
+        `(MISSION_HUB_ENV=${deploymentEnv}): every request would be refused ` +
+        'with 403. List at least one host name.',
     );
   }
 }
@@ -333,7 +356,6 @@ export function createApp(
   const allowDestructiveVerify =
     options.allowDestructiveVerify ??
     process.env.MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY === 'true';
-  const stage = options.stage ?? getStage();
 
   const app = new Hono();
   app.use('*', hostHeaderValidation(getAllowedHosts()));
@@ -413,11 +435,12 @@ export function createApp(
     ]);
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
 
-    if (stage === 'production' || !allowDestructiveVerify) {
+    // The explicit switch, plus the `verify:admin` scope checked above, is the
+    // whole gate. The deployment environment deliberately does not enter this
+    // decision: a name is a label, not a capability. This switch must never be
+    // true outside staging (see SECURITY.md).
+    if (!allowDestructiveVerify) {
       return c.json({ error: 'destructive_verify_forbidden' }, 403);
-    }
-    if (stage !== 'staging') {
-      return c.json({ error: 'destructive_verify_not_staging' }, 403);
     }
 
     const missionId = parseId(c.req.param('missionId'));

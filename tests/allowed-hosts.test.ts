@@ -4,7 +4,7 @@ import {
   createApp,
   DEFAULT_ALLOWED_HOSTS,
   getAllowedHosts,
-  getStage,
+  getEnv,
   isHostAllowed,
 } from '../src/app.js';
 import type { MissionHubStore } from '../src/db/store.js';
@@ -117,22 +117,36 @@ describe('isHostAllowed', () => {
   });
 });
 
-describe('getStage', () => {
-  it('defaults to development', () => {
-    expect(getStage({})).toBe('development');
-    expect(getStage({ MISSION_HUB_STAGE: '' })).toBe('development');
-    expect(getStage({ MISSION_HUB_STAGE: '  ' })).toBe('development');
+describe('getEnv', () => {
+  it('defaults to development when the variable is unset or blank', () => {
+    expect(getEnv({})).toBe('development');
+    expect(getEnv({ MISSION_HUB_ENV: '' })).toBe('development');
+    expect(getEnv({ MISSION_HUB_ENV: '  ' })).toBe('development');
   });
 
-  it('never implies a production capability from an unknown value', () => {
-    expect(getStage({ MISSION_HUB_STAGE: 'prod' })).toBe('development');
-    expect(getStage({ MISSION_HUB_STAGE: 'production-ish' })).toBe('development');
+  it('refuses to guess when the value is unrecognized', () => {
+    expect(() => getEnv({ MISSION_HUB_ENV: 'prod' })).toThrow(
+      /is not a valid environment/,
+    );
+    expect(() => getEnv({ MISSION_HUB_ENV: 'production-ish' })).toThrow(
+      /is not a valid environment/,
+    );
+    expect(() => getEnv({ MISSION_HUB_ENV: 'local' })).toThrow(
+      /is not a valid environment/,
+    );
+    expect(() => getEnv({ MISSION_HUB_ENV: 'Production ' })).not.toThrow();
   });
 
-  it('accepts the two deployed stages, case and padding insensitive', () => {
-    expect(getStage({ MISSION_HUB_STAGE: 'staging' })).toBe('staging');
-    expect(getStage({ MISSION_HUB_STAGE: ' Staging ' })).toBe('staging');
-    expect(getStage({ MISSION_HUB_STAGE: 'PRODUCTION' })).toBe('production');
+  it('accepts the three environments, case and padding insensitive', () => {
+    expect(getEnv({ MISSION_HUB_ENV: 'development' })).toBe('development');
+    expect(getEnv({ MISSION_HUB_ENV: 'staging' })).toBe('staging');
+    expect(getEnv({ MISSION_HUB_ENV: ' Staging ' })).toBe('staging');
+    expect(getEnv({ MISSION_HUB_ENV: 'PRODUCTION' })).toBe('production');
+    expect(getEnv({ MISSION_HUB_ENV: ' Production ' })).toBe('production');
+  });
+
+  it('ignores the retired MISSION_HUB_STAGE name', () => {
+    expect(getEnv({ MISSION_HUB_STAGE: 'production' })).toBe('development');
   });
 });
 
@@ -140,35 +154,44 @@ describe('assertHostAllowlistConfigured', () => {
   it('stays silent in development, with or without a declared allowlist', () => {
     expect(() => assertHostAllowlistConfigured({})).not.toThrow();
     expect(() =>
-      assertHostAllowlistConfigured({ MISSION_HUB_STAGE: 'development' }),
+      assertHostAllowlistConfigured({ MISSION_HUB_ENV: 'development' }),
     ).not.toThrow();
   });
 
-  it('refuses to boot a deployed stage without a declared allowlist', () => {
+  it('refuses to boot a deployed environment without a declared allowlist', () => {
     expect(() =>
-      assertHostAllowlistConfigured({ MISSION_HUB_STAGE: 'staging' }),
+      assertHostAllowlistConfigured({ MISSION_HUB_ENV: 'staging' }),
     ).toThrow(/MISSION_HUB_ALLOWED_HOSTS must be set/);
     expect(() =>
-      assertHostAllowlistConfigured({ MISSION_HUB_STAGE: 'production' }),
+      assertHostAllowlistConfigured({ MISSION_HUB_ENV: 'production' }),
     ).toThrow(/MISSION_HUB_ALLOWED_HOSTS must be set/);
   });
 
-  it('refuses to boot a deployed stage with an empty allowlist', () => {
+  it('refuses to boot a deployed environment with an empty allowlist', () => {
     expect(() =>
       assertHostAllowlistConfigured({
-        MISSION_HUB_STAGE: 'staging',
+        MISSION_HUB_ENV: 'staging',
         MISSION_HUB_ALLOWED_HOSTS: ' , ',
       }),
     ).toThrow(/empty allowlist/);
   });
 
-  it('accepts a declared allowlist for a deployed stage', () => {
+  it('accepts a declared allowlist for a deployed environment', () => {
     expect(() =>
       assertHostAllowlistConfigured({
-        MISSION_HUB_STAGE: 'production',
+        MISSION_HUB_ENV: 'production',
         MISSION_HUB_ALLOWED_HOSTS: 'hub.example.com',
       }),
     ).not.toThrow();
+  });
+
+  it('propagates the unrecognized-value error instead of booting', () => {
+    expect(() =>
+      assertHostAllowlistConfigured({
+        MISSION_HUB_ENV: 'prod',
+        MISSION_HUB_ALLOWED_HOSTS: 'hub.example.com',
+      }),
+    ).toThrow(/is not a valid environment/);
   });
 });
 

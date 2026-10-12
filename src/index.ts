@@ -5,7 +5,7 @@ import {
   assertHostAllowlistConfigured,
   createApp,
   getAllowedHosts,
-  getStage,
+  getEnv,
 } from './app.js';
 import {
   loadAdminToken,
@@ -19,7 +19,7 @@ import { MissionHubStore } from './db/store.js';
 // allowlist must be declared, otherwise every request would be refused with 403.
 assertHostAllowlistConfigured();
 console.error(
-  `[mission-hub] stage=${getStage()} allowed_hosts=${getAllowedHosts().length}`,
+  `[mission-hub] env=${getEnv()} allowed_hosts=${getAllowedHosts().length}`,
 );
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
