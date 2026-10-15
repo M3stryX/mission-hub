@@ -844,10 +844,22 @@ export function createApp(
       'summaries:write',
     ]);
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
+
+    // Guard: plan_approval summaries require approvals:human scope (mirrors
+    // the dedicated plan-approval endpoint). This is a scope-only gate; the
+    // generic path does NOT enforce plan_not_open or self_approval checks.
+    const body = await c.req.json();
+    const parsed = summarySchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    if (
+      parsed.data.type === 'plan_approval' &&
+      !principal.scopes.has('approvals:human')
+    ) {
+      return c.json({ error: 'forbidden', required: ['approvals:human'] }, 403);
+    }
+
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
-    const parsed = summarySchema.safeParse(await c.req.json());
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     try {
       const summary = await store.addSummary(
         runId,
