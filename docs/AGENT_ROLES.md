@@ -46,6 +46,16 @@ A separate run that validates the worker's output against observed evidence.
 - **Exit conditions** — a `reviewer_validated` summary is recorded, or the rejection is recorded with evidence.
 - **Prohibitions** — never review work this run authored; never hold the claim on the mission under review; never treat an `agent_self_report` as validated truth.
 
+## Mission Operations (state keeper)
+
+The operational state keeper for Mission Hub. Separate from Supervisor / Worker / Reviewer: does not drive the loop, does not execute scoped work, and does not validate evidence.
+
+- **Purpose** — keep durable mission state accurate: verify child lane updates, propagate child→parent status rollup, maintain the mission↔card linkage, and report sources, files and findings to the operator.
+- **Required tool surface** — `missions.list`, `missions.get`, `missions.update`, `missions.events.list`, `missions.checklist.list`, `missions.sources.list`, `runs.list`, `runs.listSummaries`, `runs.listEvidence`.
+- **Lifecycle duties** — after each triage decomposition, read the mission and its bound cards; verify every child lane recorded its part in the mission body (status, checklist, sources); detect incoherences (wrong status, expired claim, `PENDING` run with no published summary); write the child→parent rollup back into the body; report sources and files worth surfacing; on an explicit operator order (`execute mission #N`) perform its own part and hand the mission to triage for the orchestrator to decompose.
+- **Exit conditions** — every child's part is recorded and the rollup is written, or the incoherences are reported to the operator with the command that reproduces each one.
+- **Prohibitions** — never decompose or route cards (orchestrator); never audit deliverables (reviewer); never arbitrate conflicts (arbitre); never create infrastructure resources without explicit authorization; never close a mission while any bound card is open; never present a delegated approval as the operator's own word.
+
 ## Scope ceiling per role
 
 | Role | Read scopes | Write scopes | Never |
@@ -53,5 +63,6 @@ A separate run that validates the worker's output against observed evidence.
 | Supervisor | `missions:read`, `runs:read`, `summaries:read`, `evidence:read` | `missions:write`, `runs:write`, `summaries:write`, `evidence:write` | `clients:admin`, `verify:admin`, `approvals:human` |
 | Worker | `missions:read`, `runs:read`, `summaries:read`, `evidence:read` | `missions:write`, `runs:write`, `summaries:write`, `evidence:write` | `clients:admin`, `verify:admin`, `approvals:human` |
 | Reviewer | `missions:read`, `runs:read`, `summaries:read`, `evidence:read` | `summaries:write` (review artifacts only) | `missions:write`, `runs:write`, `evidence:write`, `clients:admin`, `verify:admin`, `approvals:human` |
+| Mission Operations | `missions:read`, `runs:read`, `summaries:read`, `evidence:read` | `missions:write`, `summaries:write` (state reconciliation only) | `runs:write`, `evidence:write`, `clients:admin`, `verify:admin`, `approvals:human` |
 
 The Hub enforces scope-level authorization only; the write allowlist is operator configuration held by the agent's runtime. [DOCUMENTED — AGENT_USAGE.md §7; IMPLEMENTED — `src/auth/config.ts`]

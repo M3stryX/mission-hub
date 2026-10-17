@@ -98,8 +98,11 @@ Four rules keep the mapping safe:
 
 Per-stage run purposes and proof artifacts stay the contract's to define: [`docs/AGENT_USAGE.md`](AGENT_USAGE.md) §12.
 
-## 4. Evidence and completion rule
+### State keeper (Mission Operations) — non-dispatch role
 
+The state keeper described in [`docs/AGENT_ROLES.md`](AGENT_ROLES.md) is **not** part of the stage→action mapping: it never owns a stage, and no stage dispatch routes to it. It runs after a decomposition to reconcile state — verifying each child lane recorded its part in the mission body, writing the child→parent rollup, and reporting incoherences with the command that reproduces each one. It hands a mission to triage only on an explicit operator order. The orchestrator that decomposes triage cards is a different role; a state keeper that also decomposed would both produce and verify its own bookkeeping.
+
+## 4. Evidence and completion rule
 1. **Never infer completion from an agent self-report.** An `agent_self_report` summary is a claim, not validated truth; runtime evidence outranks docs and inference for current-state claims. [DOCUMENTED — AGENT_USAGE.md §5–6]
 2. **Run completion is not mission business status.** A `COMPLETED` run (and a claim released `completed`) says the execution unit finished; the mission's durable goal state (`mission.status`) is a separate human-facing signal. [DOCUMENTED — AGENT_USAGE.md §2; OBSERVED — PROOF D: run `COMPLETED` while the mission stayed `done`]
 3. **Every `completed` release carries ≥1 summary + ≥1 evidence**; the Hub refuses the release otherwise (`claim_release_incomplete`). [OBSERVED — PROOF D]
