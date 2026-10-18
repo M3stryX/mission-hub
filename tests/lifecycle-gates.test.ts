@@ -234,7 +234,8 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
   it('accepts the new summary types on runs.recordSummary', async () => {
     const missionId = await createMission('New summary types');
     const runId = await createRun(missionId, 'planning', 'summary-types');
-    for (const type of newSummaryTypes) {
+    // plan_summary and jev_decision only need summaries:write (operator-token has it)
+    for (const type of ['plan_summary', 'jev_decision']) {
       const { res, body } = await recordSummary(
         runId,
         type,
@@ -245,6 +246,16 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
       expect(res.status).toBe(201);
       expect(body.summary?.type).toBe(type);
     }
+    // plan_approval requires approvals:human scope (approver-token has it)
+    const { res, body } = await recordSummary(
+      runId,
+      'plan_approval',
+      'recorded plan_approval',
+      'approver-token',
+      { checkpoint: 'plan_approval' },
+    );
+    expect(res.status).toBe(201);
+    expect(body.summary?.type).toBe('plan_approval');
     const list = await app.request(
       `http://localhost/api/v1/runs/${runId}/summaries?type=plan_approval`,
       { headers: auth('operator-token') },
