@@ -646,6 +646,9 @@ export function buildMcpServer(
       if (!requireScopes(principal, ['summaries:write'])) {
         return forbidden(['summaries:write']);
       }
+      if (type === 'plan_approval' && !requireScopes(principal, ['approvals:human'])) {
+        return forbidden(['approvals:human']);
+      }
       try {
         return toolResult(
           await store.addSummary(

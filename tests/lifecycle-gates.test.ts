@@ -234,7 +234,8 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
   it('accepts the new summary types on runs.recordSummary', async () => {
     const missionId = await createMission('New summary types');
     const runId = await createRun(missionId, 'planning', 'summary-types');
-    for (const type of newSummaryTypes) {
+    // plan_summary and jev_decision only need summaries:write (operator-token has it)
+    for (const type of ['plan_summary', 'jev_decision']) {
       const { res, body } = await recordSummary(
         runId,
         type,
@@ -245,12 +246,57 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
       expect(res.status).toBe(201);
       expect(body.summary?.type).toBe(type);
     }
+    // plan_approval requires approvals:human scope (approver-token has it)
+    const { res, body } = await recordSummary(
+      runId,
+      'plan_approval',
+      'recorded plan_approval',
+      'approver-token',
+      { checkpoint: 'plan_approval' },
+    );
+    expect(res.status).toBe(201);
+    expect(body.summary?.type).toBe('plan_approval');
     const list = await app.request(
       `http://localhost/api/v1/runs/${runId}/summaries?type=plan_approval`,
       { headers: auth('operator-token') },
     );
     expect(list.status).toBe(200);
     expect((await parseBody(list)).summaries).toHaveLength(1);
+  });
+
+  it('refuses plan_approval on the generic summary writers without approvals:human', async () => {
+    const missionId = await createMission('Unguarded plan approval');
+    const runId = await createRun(missionId, 'planning', 'guard-negative');
+
+    // REST: a summaries:write-only principal is refused.
+    const rest = await recordSummary(
+      runId,
+      'plan_approval',
+      'unauthorized approval',
+      'operator-token',
+      { checkpoint: 'plan_approval' },
+    );
+    expect(rest.res.status).toBe(403);
+    expect(rest.body.error).toBe('insufficient_scope');
+
+    // MCP: same rule on the tool surface.
+    const operator = await connectMcp('operator-token');
+    const mcpResult = await callTool(operator, 'runs.recordSummary', {
+      runId,
+      type: 'plan_approval',
+      content: 'unauthorized approval via MCP',
+      metadata: { checkpoint: 'plan_approval' },
+    });
+    expect(mcpResult.isError).toBe(true);
+    expect(toolErrorOf(mcpResult)).toBe('forbidden');
+
+    // Neither surface persisted anything.
+    const listed = await app.request(
+      `http://localhost/api/v1/runs/${runId}/summaries?type=plan_approval`,
+      { headers: auth('operator-token') },
+    );
+    expect(listed.status).toBe(200);
+    expect((await parseBody(listed)).summaries).toHaveLength(0);
   });
 
   it('serves jev evaluations over REST and MCP with identical rows', async () => {

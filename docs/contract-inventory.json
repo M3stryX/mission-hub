@@ -190,7 +190,7 @@
     "runs.create": "Create a run without claiming, optionally with typed purpose (research|implementation|runtime_verification|independent_review|incident_analysis|maintenance|migration|benchmark|other|architecture|planning|jev_gate). Prefer missions.claim for exclusive work.",
     "runs.updateStatus": "Update run status (PENDING|RUNNING|COMPLETED|FAILED). After claim expiry/reclaim, previous owners are fenced (claim_fenced). Prefer claim.release for terminalization on claimed work.",
     "runs.listEvents": "List execution events for a run (status changes, claim events, summaries, evidence).",
-    "runs.recordSummary": "Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note|plan_summary|plan_approval|jev_decision) with optional provenance metadata. Required before claim.release completed.",
+    "runs.recordSummary": "Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note|plan_summary|plan_approval|jev_decision) with optional provenance metadata. type=plan_approval additionally requires the approvals:human scope. Required before claim.release completed.",
     "runs.listSummaries": "List summaries for a run, optionally filtered by summary type.",
     "runs.recordEvidence": "Append evidence (kind, label, uri, metadata). When research taxonomy is supplied, source_type must be one of observed_runtime|real_data|code_config|internal_doc|external_primary|external_community|inference.",
     "runs.listEvidence": "List evidence references for a run.",
