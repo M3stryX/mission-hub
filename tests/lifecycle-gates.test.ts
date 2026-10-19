@@ -264,6 +264,41 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
     expect((await parseBody(list)).summaries).toHaveLength(1);
   });
 
+  it('refuses plan_approval on the generic summary writers without approvals:human', async () => {
+    const missionId = await createMission('Unguarded plan approval');
+    const runId = await createRun(missionId, 'planning', 'guard-negative');
+
+    // REST: a summaries:write-only principal is refused.
+    const rest = await recordSummary(
+      runId,
+      'plan_approval',
+      'unauthorized approval',
+      'operator-token',
+      { checkpoint: 'plan_approval' },
+    );
+    expect(rest.res.status).toBe(403);
+    expect(rest.body.error).toBe('insufficient_scope');
+
+    // MCP: same rule on the tool surface.
+    const operator = await connectMcp('operator-token');
+    const mcpResult = await callTool(operator, 'runs.recordSummary', {
+      runId,
+      type: 'plan_approval',
+      content: 'unauthorized approval via MCP',
+      metadata: { checkpoint: 'plan_approval' },
+    });
+    expect(mcpResult.isError).toBe(true);
+    expect(toolErrorOf(mcpResult)).toBe('forbidden');
+
+    // Neither surface persisted anything.
+    const listed = await app.request(
+      `http://localhost/api/v1/runs/${runId}/summaries?type=plan_approval`,
+      { headers: auth('operator-token') },
+    );
+    expect(listed.status).toBe(200);
+    expect((await parseBody(listed)).summaries).toHaveLength(0);
+  });
+
   it('serves jev evaluations over REST and MCP with identical rows', async () => {
     const missionId = await createMission('JEV mission');
     const otherMissionId = await createMission('Other JEV mission');
