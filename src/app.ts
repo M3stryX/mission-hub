@@ -1102,7 +1102,10 @@ export function createApp(
       parsed.data.type === 'plan_approval' &&
       !principal.scopes.has('approvals:human')
     ) {
-      return c.json({ error: 'forbidden', required: ['approvals:human'] }, 403);
+      return c.json(
+        { error: 'insufficient_scope', required: ['approvals:human'] },
+        403,
+      );
     }
 
     const runId = parseId(c.req.param('id'));

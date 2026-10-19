@@ -199,7 +199,7 @@ export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'runs.listEvents':
     'List execution events for a run (status changes, claim events, summaries, evidence).',
   'runs.recordSummary':
-    'Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note|plan_summary|plan_approval|jev_decision) with optional provenance metadata. Required before claim.release completed.',
+    'Append a typed summary (agent_self_report|research_report|reviewer_validated|operator_note|plan_summary|plan_approval|jev_decision) with optional provenance metadata. type=plan_approval additionally requires the approvals:human scope. Required before claim.release completed.',
   'runs.listSummaries':
     'List summaries for a run, optionally filtered by summary type.',
   'runs.recordEvidence':

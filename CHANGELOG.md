@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential ever reaches the log.
 
 ### Changed
+- **`plan_approval` summaries require `approvals:human`** — the generic summary writers (REST `POST /api/v1/runs/:id/summaries` and MCP `runs.recordSummary`) now refuse `type = "plan_approval"` without that scope, mirroring the dedicated plan-approval endpoint. `plan_not_open` and `self_approval` are still not enforced on the generic path.
 
 - **Boot line names the host allowlist instead of counting it** —
   `allowed_hosts=2` becomes `allowed_hosts=mission-hub.lan,…`, and the database
