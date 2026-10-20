@@ -9,10 +9,16 @@ import {
   type Scope,
 } from './auth/config.js';
 import {
-  requirePrincipal,
+  authenticateAndAuthorize,
   resolvePrincipal,
   type AuthResolverOptions,
+  type AuthResult,
 } from './auth/resolve.js';
+import {
+  readCommit,
+  readContractVersion,
+  readProductVersion,
+} from './build-info.js';
 import {
   ClaimAlreadyReleasedError,
   ClaimConflictError,
@@ -40,10 +46,19 @@ const missionStatus = z.enum([
   'blocked',
 ]);
 
+const missionStage = z.enum([
+  'research',
+  'architecture',
+  'plan',
+  'execution',
+  'done',
+]);
+
 const createMissionSchema = z.object({
   title: z.string().min(1),
   body: z.string().nullable().optional(),
   status: missionStatus.optional(),
+  stage: missionStage.optional(),
   priority: z.number().int().min(1).max(5).optional(),
   dueAt: z.string().nullable().optional(),
   source: z.string().nullable().optional(),
@@ -205,15 +220,20 @@ const sourceCreateSchema = z.object({
   kind: z.enum(['doc', 'link']),
 });
 
-const STAGING_HOSTS = new Set([
-  'mission-hub-staging.lan',
-  'mission-staging.lan',
-  'mission-hub-staging.mestryx.dev',
+/**
+ * Built-in Host allowlist used when `MISSION_HUB_ALLOWED_HOSTS` is not set.
+ *
+ * Loopback only, on purpose: the code carries no deployment topology, so a new
+ * or renamed host never requires a code change or a release. A deployed
+ * environment declares the names it answers on through
+ * `MISSION_HUB_ALLOWED_HOSTS` and refuses to boot without them (see
+ * `assertHostAllowlistConfigured`).
+ * Matching is exact (one entry per hostname) — no wildcard, no regex.
+ */
+export const DEFAULT_ALLOWED_HOSTS: readonly string[] = [
   'localhost',
   '127.0.0.1',
-]);
-
-const PROD_HOSTS = new Set(['mission-hub.lan', 'mission.lan']);
+];
 
 function parseId(value: string): number | null {
   const parsed = Number(value);
@@ -224,12 +244,150 @@ export type CreateAppOptions = AuthResolverOptions & {
   allowDestructiveVerify?: boolean;
 };
 
-function hasServiceScope(principal: Principal): boolean {
-  return ALL_SERVICE_SCOPES.some((scope) => principal.scopes.has(scope));
+/**
+ * Whether a principal may open the MCP surface (`ALL /mcp`).
+ *
+ * Service clients qualify through their service scopes. The bootstrap admin
+ * principal carries only `clients:admin` — never a service scope — so it is
+ * admitted explicitly: without this, a token authenticated as admin would be
+ * rejected by `/mcp` and the `clients.*` tools would be unreachable, leaving
+ * client administration REST-only.
+ */
+function canUseMcpSurface(principal: Principal): boolean {
+  return (
+    ALL_SERVICE_SCOPES.some((scope) => principal.scopes.has(scope)) ||
+    principal.scopes.has('clients:admin')
+  );
 }
 
 function requestHost(header: string | undefined): string {
   return (header ?? '').split(':')[0].trim().toLowerCase();
+}
+
+/**
+ * Resolves the request Host allowlist from the environment.
+ *
+ * `MISSION_HUB_ALLOWED_HOSTS` is a comma-separated list of hostnames: each entry
+ * is trimmed and empty entries are dropped. When the variable is unset, the
+ * built-in default applies: loopback only, which suits local development.
+ * A defined-but-empty variable therefore yields an empty allowlist.
+ */
+export function getAllowedHosts(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const configured = env.MISSION_HUB_ALLOWED_HOSTS;
+  if (configured === undefined) return [...DEFAULT_ALLOWED_HOSTS];
+  return configured
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+/**
+ * Loopback names every deployment accepts, on top of its own allowlist.
+ *
+ * The container probes its own liveness over loopback — the Dockerfile
+ * `HEALTHCHECK` calls `http://127.0.0.1:${PORT}/health` — while the request
+ * guard below is app-wide (`app.use('*', ...)`). A deployment that listed only
+ * its public names would therefore answer its own health probe with `403` and
+ * be marked unhealthy, so loopback is a built-in constant rather than a
+ * deployment setting: it is never a name a deployment is *reached* by, and it
+ * cannot be forgotten the way an environment entry can.
+ */
+export const LOOPBACK_HOSTS: readonly string[] = ['127.0.0.1', 'localhost'];
+
+/**
+ * The effective allowlist the request guard applies: the configured names plus
+ * the built-in {@link LOOPBACK_HOSTS}. `getAllowedHosts` stays the *configured*
+ * list so the boot assertion cannot be satisfied by the built-in entries.
+ */
+export function allowedHostsFor(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  return [...new Set([...getAllowedHosts(env), ...LOOPBACK_HOSTS])];
+}
+
+/**
+ * Exact (non wildcard) Host allowlist check. The incoming header is normalized
+ * the same way as the request middleware: port stripped, trimmed, lowercased.
+ */
+export function isHostAllowed(
+  host: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const normalized = requestHost(host);
+  if (normalized.length === 0) return false;
+  return allowedHostsFor(env).includes(normalized);
+}
+
+/**
+ * Deployment environment, from `MISSION_HUB_ENV` — the conventional `*_ENV`
+ * name (`NODE_ENV`, `RAILS_ENV`, `APP_ENV`).
+ *
+ * Unset or blank means `development`. An unrecognized value — a misspelled
+ * `prod`, a stray `production-eu` — is a configuration error and throws: the
+ * whole point of this variable is to name the deployment, so silently
+ * degrading it to `development` would hide exactly the mistake it exists to
+ * catch.
+ *
+ * This is a label and a boot policy, never a capability. It decides whether
+ * the Host allowlist is mandatory at boot; it gates no route (the
+ * destructive-verify switch is a separate, explicit, orthogonal flag).
+ */
+export type MissionHubEnv = 'development' | 'staging' | 'production';
+
+export const DEPLOYMENT_ENVS: readonly MissionHubEnv[] = [
+  'development',
+  'staging',
+  'production',
+];
+
+export function getEnv(
+  env: Record<string, string | undefined> = process.env,
+): MissionHubEnv {
+  const value = (env.MISSION_HUB_ENV ?? '').trim().toLowerCase();
+  if (value.length === 0) return 'development';
+  if ((DEPLOYMENT_ENVS as readonly string[]).includes(value)) {
+    return value as MissionHubEnv;
+  }
+  throw new Error(
+    `MISSION_HUB_ENV="${env.MISSION_HUB_ENV}" is not a valid environment. ` +
+      `Expected one of ${DEPLOYMENT_ENVS.join(', ')}, or unset for development. ` +
+      'Refusing to start rather than guess which environment this is.',
+  );
+}
+
+/**
+ * A deployed environment must declare the Host names it answers on.
+ *
+ * With the loopback-only default, an unset or empty `MISSION_HUB_ALLOWED_HOSTS`
+ * would make the deployment boot normally and then refuse every real request
+ * with `403` — an outage disguised as a client error. Failing at boot instead
+ * makes the misconfiguration loud and immediate.
+ */
+export function assertHostAllowlistConfigured(
+  env: Record<string, string | undefined> = process.env,
+): void {
+  const deploymentEnv = getEnv(env);
+  if (deploymentEnv === 'development') return;
+
+  if (env.MISSION_HUB_ALLOWED_HOSTS === undefined) {
+    throw new Error(
+      `MISSION_HUB_ALLOWED_HOSTS must be set when MISSION_HUB_ENV=${deploymentEnv}: ` +
+        'the built-in default is loopback only, so the deployment would refuse ' +
+        'every request with 403. Set it to the host names this deployment is ' +
+        'served on (comma-separated).',
+    );
+  }
+
+  const hosts = getAllowedHosts(env);
+  if (hosts.length === 0) {
+    throw new Error(
+      `MISSION_HUB_ALLOWED_HOSTS resolves to an empty allowlist ` +
+        `(MISSION_HUB_ENV=${deploymentEnv}): every request would be refused ` +
+        'with 403. List at least one host name.',
+    );
+  }
 }
 
 export function createApp(
@@ -242,27 +400,47 @@ export function createApp(
     process.env.MISSION_HUB_ALLOW_DESTRUCTIVE_VERIFY === 'true';
 
   const app = new Hono();
-  app.use(
-    '*',
-    hostHeaderValidation([
-      'localhost',
-      '127.0.0.1',
-      'mission.lan',
-      'mission-staging.lan',
-      'mission-hub-staging.lan',
-      'mission-hub.lan',
-      'mission-hub-staging.mestryx.dev',
-    ]),
-  );
+  // Host policy is a transport decision, so the refusal body follows the
+  // protocol of the route being called: `/mcp` keeps the MCP transport's
+  // JSON-RPC envelope, every REST route answers a REST body. Dressing a REST
+  // refusal in a JSON-RPC envelope hands a REST client an error shape its own
+  // protocol never produces (contract v3.0).
+  app.use('*', async (c, next) => {
+    if (c.req.path === '/mcp') return next();
+    if (isHostAllowed(c.req.header('host'))) return next();
+    return c.json(
+      { error: 'invalid_host', host: requestHost(c.req.header('host')) },
+      403,
+    );
+  });
+  app.use('/mcp', hostHeaderValidation(allowedHostsFor()));
 
-  async function principalFor(
+  /**
+   * Authenticate + authorize, keeping *why* a request was refused: `401` for an
+   * unknown credential, `400` for an unparsable `Authorization` header, and
+   * `403 insufficient_scope` (listing the missing scopes) for a valid but
+   * under-scoped one. Collapsing those into a single `401` tells an integrator
+   * holding a valid token to rotate a secret that is not the problem.
+   */
+  async function principalOr(
     authorization: string | undefined,
     scopes: readonly Scope[],
-  ): Promise<Principal | null> {
-    return requirePrincipal(authorization, store, authOptions, scopes);
+  ): Promise<AuthResult> {
+    return authenticateAndAuthorize(authorization, store, authOptions, scopes);
   }
 
-  app.get('/health', (c) => c.json({ status: 'ok' }));
+  // Liveness + build identity: which version, contract revision and commit is
+  // actually answering. Read-only, unauthenticated, and deliberately free of
+  // store access so it answers even when the database is unhealthy.
+  app.get('/health', (c) =>
+    c.json({
+      status: 'ok',
+      version: readProductVersion(),
+      contract: readContractVersion(),
+      commit: readCommit(),
+      env: getEnv(),
+    }),
+  );
 
   app.get('/ready', async (c) => {
     try {
@@ -274,18 +452,22 @@ export function createApp(
   });
 
   app.get('/api/v1/admin/clients', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'clients:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     return c.json({ clients: await store.listClients() });
   });
 
   app.post('/api/v1/admin/clients', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'clients:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const parsed = createClientSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     let scopes: Scope[];
@@ -316,26 +498,30 @@ export function createApp(
   });
 
   app.post('/api/v1/admin/clients/:clientId/revoke', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'clients:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const client = await store.revokeClient(c.req.param('clientId'));
     return client ? c.json({ client }) : c.json({ error: 'not_found' }, 404);
   });
 
   app.delete('/api/v1/admin/verify-fixtures/:missionId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'verify:admin',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
-
-    const host = requestHost(c.req.header('host'));
-    if (PROD_HOSTS.has(host) || !allowDestructiveVerify) {
-      return c.json({ error: 'destructive_verify_forbidden' }, 403);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
     }
-    if (!STAGING_HOSTS.has(host)) {
-      return c.json({ error: 'destructive_verify_host_forbidden' }, 403);
+
+    // The explicit switch, plus the `verify:admin` scope checked above, is the
+    // whole gate. The deployment environment deliberately does not enter this
+    // decision: a name is a label, not a capability. This switch must never be
+    // true outside staging (see SECURITY.md).
+    if (!allowDestructiveVerify) {
+      return c.json({ error: 'destructive_verify_forbidden' }, 403);
     }
 
     const missionId = parseId(c.req.param('missionId'));
@@ -361,18 +547,22 @@ export function createApp(
   });
 
   app.get('/api/v1/missions', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     return c.json({ missions: await store.listMissions(c.req.query('q')) });
   });
 
   app.get('/api/v1/missions/:id', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const id = parseId(c.req.param('id'));
     if (!id) return c.json({ error: 'invalid_id' }, 400);
     const mission = await store.getMission(id);
@@ -380,10 +570,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const parsed = createMissionSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     const mission = await store.createMission(parsed.data, principal.clientId);
@@ -391,10 +584,13 @@ export function createApp(
   });
 
   app.patch('/api/v1/missions/:id', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const id = parseId(c.req.param('id'));
     if (!id) return c.json({ error: 'invalid_id' }, 400);
     const parsed = updateMissionSchema.safeParse(await c.req.json());
@@ -408,10 +604,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/checklist', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -421,10 +619,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions/:id/checklist', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = checklistCreateSchema.safeParse(await c.req.json());
@@ -439,10 +640,13 @@ export function createApp(
   });
 
   app.patch('/api/v1/missions/:id/checklist/:itemId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     const itemId = parseId(c.req.param('itemId'));
     if (!missionId || !itemId) return c.json({ error: 'invalid_id' }, 400);
@@ -465,10 +669,13 @@ export function createApp(
   });
 
   app.delete('/api/v1/missions/:id/checklist/:itemId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     const itemId = parseId(c.req.param('itemId'));
     if (!missionId || !itemId) return c.json({ error: 'invalid_id' }, 400);
@@ -481,10 +688,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/sources', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -494,10 +703,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions/:id/sources', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = sourceCreateSchema.safeParse(await c.req.json());
@@ -520,10 +732,13 @@ export function createApp(
   });
 
   app.delete('/api/v1/missions/:id/sources/:sourceId', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     const sourceId = parseId(c.req.param('sourceId'));
     if (!missionId || !sourceId) return c.json({ error: 'invalid_id' }, 400);
@@ -536,10 +751,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/events', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -549,10 +766,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/claim', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'missions:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     if (!(await store.getMission(missionId))) {
@@ -562,10 +781,13 @@ export function createApp(
   });
 
   app.post('/api/v1/missions/:id/claim', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = claimMissionSchema.safeParse(await c.req.json());
@@ -594,10 +816,13 @@ export function createApp(
   });
 
   app.post('/api/v1/claims/:claimId/renew', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const claimId = parseId(c.req.param('claimId'));
     if (!claimId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = renewClaimSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -627,10 +852,13 @@ export function createApp(
   });
 
   app.post('/api/v1/claims/:claimId/release', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const claimId = parseId(c.req.param('claimId'));
     if (!claimId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = releaseClaimSchema.safeParse(await c.req.json());
@@ -680,10 +908,12 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/runs', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const purposeRaw = c.req.query('purpose');
@@ -700,11 +930,13 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/research-reports', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({
@@ -713,11 +945,13 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/research-report', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({
@@ -726,11 +960,13 @@ export function createApp(
   });
 
   app.get('/api/v1/missions/:id/jev-evaluations', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const checkpoint = c.req.query('checkpoint') || undefined;
@@ -743,24 +979,24 @@ export function createApp(
   });
 
   app.get('/api/v1/jev-gate', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     return c.json({ evaluations: await store.listJevEvaluations() });
   });
 
   app.post('/api/v1/missions/:id/plan-approval', async (c) => {
-    const principal = await resolvePrincipal(
-      c.req.header('authorization'),
-      store,
-      authOptions,
-    );
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
-    if (!principal.scopes.has('approvals:human')) {
-      return c.json({ error: 'forbidden', required: ['approvals:human'] }, 403);
+    const auth = await principalOr(c.req.header('authorization'), [
+      'approvals:human',
+    ]);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
     }
+    const principal = auth.principal;
     const missionId = parseId(c.req.param('id'));
     if (!missionId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = planApprovalSchema.safeParse(await c.req.json());
@@ -777,7 +1013,7 @@ export function createApp(
         : c.json({ error: 'not_found' }, 404);
     } catch (error) {
       if (error instanceof PlanNotOpenError) {
-        return c.json({ error: 'plan_not_open', missionId }, 401);
+        return c.json({ error: 'plan_not_open', missionId }, 409);
       }
       if (error instanceof SelfApprovalError) {
         return c.json({ error: 'self_approval', missionId }, 409);
@@ -787,10 +1023,13 @@ export function createApp(
   });
 
   app.post('/api/v1/runs', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const parsed = createRunSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     const run = await store.createRun(parsed.data, principal.clientId);
@@ -798,10 +1037,13 @@ export function createApp(
   });
 
   app.patch('/api/v1/runs/:id/status', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = updateRunStatusSchema.safeParse(await c.req.json());
@@ -830,24 +1072,44 @@ export function createApp(
   });
 
   app.get('/api/v1/runs/:id/events', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'runs:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({ events: await store.listRunEvents(runId) });
   });
 
   app.post('/api/v1/runs/:id/summaries', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'summaries:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
+
+    // Guard: plan_approval summaries require the approvals:human scope, mirroring
+    // the dedicated plan-approval endpoint. Scope-only gate: the generic path does
+    // NOT enforce plan_not_open or self_approval.
+    const body = await c.req.json();
+    const parsed = summarySchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    if (
+      parsed.data.type === 'plan_approval' &&
+      !principal.scopes.has('approvals:human')
+    ) {
+      return c.json(
+        { error: 'insufficient_scope', required: ['approvals:human'] },
+        403,
+      );
+    }
+
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
-    const parsed = summarySchema.safeParse(await c.req.json());
-    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
     try {
       const summary = await store.addSummary(
         runId,
@@ -873,10 +1135,12 @@ export function createApp(
   });
 
   app.get('/api/v1/runs/:id/summaries', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'summaries:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const typeRaw = c.req.query('type');
@@ -893,10 +1157,13 @@ export function createApp(
   });
 
   app.post('/api/v1/runs/:id/evidence', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'evidence:write',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
+    const principal = auth.principal;
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     const parsed = evidenceSchema.safeParse(await c.req.json());
@@ -927,10 +1194,12 @@ export function createApp(
   });
 
   app.get('/api/v1/runs/:id/evidence', async (c) => {
-    const principal = await principalFor(c.req.header('authorization'), [
+    const auth = await principalOr(c.req.header('authorization'), [
       'evidence:read',
     ]);
-    if (!principal) return c.json({ error: 'unauthorized' }, 401);
+    if (!auth.ok) {
+      return c.json(auth.failure.body, auth.failure.status);
+    }
     const runId = parseId(c.req.param('id'));
     if (!runId) return c.json({ error: 'invalid_id' }, 400);
     return c.json({ evidence: await store.listEvidence(runId) });
@@ -942,7 +1211,7 @@ export function createApp(
       store,
       authOptions,
     );
-    if (!principal || !hasServiceScope(principal)) {
+    if (!principal || !canUseMcpSurface(principal)) {
       return c.json({ error: 'unauthorized' }, 401);
     }
 
