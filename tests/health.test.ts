@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import {
   COMMIT_ENV_KEY,
+  readCommit,
   readContractVersion,
   readProductVersion,
-  UNKNOWN_COMMIT,
 } from '../src/build-info.js';
 import type { MissionHubStore } from '../src/db/store.js';
 
@@ -44,7 +44,10 @@ describe('GET /health', () => {
       status: 'ok',
       version: readProductVersion(),
       contract: readContractVersion(),
-      commit: UNKNOWN_COMMIT,
+      // Whatever this checkout resolves: `unknown` in a clean clone, the stamped
+      // revision if a build stamp sits beside the sources. `readCommit` is the
+      // single source for it, so the test never restates the rule.
+      commit: readCommit(),
       env: 'development',
     });
   });
