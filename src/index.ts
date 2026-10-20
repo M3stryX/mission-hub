@@ -1,17 +1,93 @@
 import 'dotenv/config';
+import { writeSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { Pool } from 'pg';
-import { createApp } from './app.js';
+import {
+  assertHostAllowlistConfigured,
+  createApp,
+  allowedHostsFor,
+  getEnv,
+} from './app.js';
+import {
+  describeDatabaseTarget,
+  formatBootLine,
+  formatDatabaseRetryLine,
+  formatMigrationFailureLine,
+  resolveDbRetryPolicy,
+  runMigrationsWithRetry,
+} from './boot.js';
 import {
   loadAdminToken,
   loadClientCredentials,
 } from './auth/config.js';
 import { seedEnvClients } from './auth/resolve.js';
-import { runMigrations } from './db/migrate.js';
 import { MissionHubStore } from './db/store.js';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await runMigrations(pool);
+// Fail fast on a misconfigured deployment: outside development the Host
+// allowlist must be declared, otherwise every request would be refused with 403.
+assertHostAllowlistConfigured();
+
+const databaseUrl = process.env.DATABASE_URL;
+const databaseTarget = describeDatabaseTarget(databaseUrl);
+const retryPolicy = resolveDbRetryPolicy();
+
+// The one startup line, naming the effective configuration: the environment,
+// the host list the request guard applies, and the database target
+// (host:port/dbname, never the credentials). A deployment whose log stops here
+// is either a dead process or a database that never came up — and this line is
+// what tells the two apart without shelling into the host.
+console.error(
+  formatBootLine({
+    env: getEnv(),
+    allowedHosts: allowedHostsFor(),
+    databaseTarget,
+  }),
+);
+
+const pool = new Pool({ connectionString: databaseUrl });
+
+// A pooled connection can die while it sits idle (database restart, failover,
+// admin `pg_terminate_backend`, network reset). pg emits `error` on the pool for
+// those clients; with no listener Node treats it as an unhandled `error` event
+// and kills the process, so the HTTP surface disappears instead of degrading.
+// Log it and keep the process alive: affected clients are discarded by the pool
+// and the next query opens a fresh connection, so /ready can answer 503.
+pool.on('error', (error) => {
+  console.error('[mission-hub] idle pool client error:', error.message);
+});
+
+try {
+  // The database legitimately starts after the application in compose and
+  // orchestration, so keep trying inside the retry window before giving up.
+  await runMigrationsWithRetry(pool, {
+    policy: retryPolicy,
+    onRetry: ({ attempt, delayMs, error }) => {
+      console.error(
+        formatDatabaseRetryLine({
+          error,
+          delayMs,
+          attempt,
+          windowMs: retryPolicy.windowMs,
+          databaseTarget,
+          connectionString: databaseUrl,
+        }),
+      );
+    },
+    onRecovered: ({ attempts, elapsedMs }) => {
+      console.error(
+        `[mission-hub] database became reachable after ${elapsedMs}ms ` +
+          `(${attempts} attempts)`,
+      );
+    },
+  });
+} catch (error) {
+  const line = formatMigrationFailureLine(error, databaseTarget, databaseUrl);
+  // Written synchronously to fd 2 on purpose: `process.exit()` can drop a
+  // queued async stderr write on a pipe, and this is the one line the platform
+  // has to show. No stack trace follows it — the cause is already in the line.
+  writeSync(2, `${line}\n`);
+  process.exit(1);
+}
 
 const store = new MissionHubStore(pool);
 const envCredentials = loadClientCredentials();

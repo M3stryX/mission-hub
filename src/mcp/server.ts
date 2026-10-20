@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import pkg from '../../package.json' with { type: 'json' };
-import { hasScopes, type Principal, type Scope } from '../auth/config.js';
+import { hasScopes, parseScopes, type Principal, type Scope } from '../auth/config.js';
 import { CONTRACT_MCP_TOOL_DESCRIPTIONS } from '../contract/inventory.js';
 import {
   ClaimAlreadyReleasedError,
@@ -81,6 +81,14 @@ const summaryTypeSchema = z.enum([
   'jev_decision',
 ]);
 
+const missionStageSchema = z.enum([
+  'research',
+  'architecture',
+  'plan',
+  'execution',
+  'done',
+]);
+
 const summaryMetadataSchema = z
   .object({
     schemaVersion: z.string().min(1).optional(),
@@ -155,6 +163,7 @@ export function buildMcpServer(
         title: z.string().min(1),
         body: z.string().nullable().optional(),
         status: z.string().optional(),
+        stage: missionStageSchema.optional(),
         priority: z.number().int().min(1).max(5).optional(),
         parentId: z.number().int().positive().nullable().optional(),
         tags: z.string().nullable().optional(),
@@ -175,6 +184,7 @@ export function buildMcpServer(
         title: z.string().min(1).optional(),
         body: z.string().nullable().optional(),
         status: z.string().optional(),
+        stage: missionStageSchema.optional(),
         priority: z.number().int().min(1).max(5).optional(),
         parentId: z.number().int().positive().nullable().optional(),
         tags: z.string().nullable().optional(),
@@ -636,6 +646,9 @@ export function buildMcpServer(
       if (!requireScopes(principal, ['summaries:write'])) {
         return forbidden(['summaries:write']);
       }
+      if (type === 'plan_approval' && !requireScopes(principal, ['approvals:human'])) {
+        return forbidden(['approvals:human']);
+      }
       try {
         return toolResult(
           await store.addSummary(
@@ -786,6 +799,76 @@ export function buildMcpServer(
         }
         throw error;
       }
+    },
+  );
+
+  // Client administration. `clients:admin` is admin-only: it is never part of
+  // ALL_SERVICE_SCOPES, cannot be minted through `clients.create`, and cannot be
+  // seeded from MISSION_HUB_CLIENTS_JSON. A service client therefore always
+  // receives `forbidden` with `required: ["clients:admin"]` here, while the
+  // bootstrap admin token reaches these tools (see `/mcp` in src/app.ts).
+  server.registerTool(
+    'clients.list',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['clients.list'],
+      inputSchema: z.object({}),
+    },
+    async () =>
+      requireScopes(principal, ['clients:admin'])
+        ? toolResult(await store.listClients())
+        : forbidden(['clients:admin']),
+  );
+
+  server.registerTool(
+    'clients.create',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['clients.create'],
+      inputSchema: z.object({
+        clientId: z
+          .string()
+          .min(1)
+          .regex(/^[a-z0-9][a-z0-9._-]{0,63}$/i),
+        scopes: z.array(z.string()).min(1),
+      }),
+    },
+    async ({ clientId, scopes }) => {
+      if (!requireScopes(principal, ['clients:admin'])) {
+        return forbidden(['clients:admin']);
+      }
+      let parsedScopes: Scope[];
+      try {
+        parsedScopes = parseScopes(scopes);
+      } catch {
+        return toolError('invalid_scopes', { scopes });
+      }
+      try {
+        const created = await store.createClient(clientId, parsedScopes);
+        return toolResult({ client: created.client, token: created.token });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (
+          message.includes('api_clients_client_id_unique') ||
+          message.includes('duplicate key')
+        ) {
+          return toolError('client_exists', { clientId });
+        }
+        throw error;
+      }
+    },
+  );
+
+  server.registerTool(
+    'clients.revoke',
+    {
+      description: CONTRACT_MCP_TOOL_DESCRIPTIONS['clients.revoke'],
+      inputSchema: z.object({ clientId: z.string().min(1) }),
+    },
+    async ({ clientId }) => {
+      if (!requireScopes(principal, ['clients:admin'])) {
+        return forbidden(['clients:admin']);
+      }
+      const client = await store.revokeClient(clientId);
+      return client ? toolResult(client) : toolError('not_found', { clientId });
     },
   );
 
