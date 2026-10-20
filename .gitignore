@@ -7,3 +7,6 @@ coverage/
 *.log
 .DS_Store
 tmp/
+
+# Build stamp written by scripts/build-commit.cjs during docker build
+commit.txt
