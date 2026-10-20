@@ -55,9 +55,15 @@ describe('readContractVersion', () => {
 
 describe('readCommit', () => {
   it('reports unknown when the build supplied no commit', () => {
-    expect(readCommit({})).toBe(UNKNOWN_COMMIT);
-    expect(readCommit({ [COMMIT_ENV_KEY]: '' })).toBe(UNKNOWN_COMMIT);
-    expect(readCommit({ [COMMIT_ENV_KEY]: '   ' })).toBe(UNKNOWN_COMMIT);
+    // Point at a stamp that cannot exist: a source checkout carries none, and a
+    // developer may have a local `commit.txt` from running the stamp script.
+    const absent = pathToFileURL(
+      join(tmpdir(), `mission-hub-absent-${Date.now()}.txt`),
+    );
+
+    expect(readCommit({}, absent)).toBe(UNKNOWN_COMMIT);
+    expect(readCommit({ [COMMIT_ENV_KEY]: '' }, absent)).toBe(UNKNOWN_COMMIT);
+    expect(readCommit({ [COMMIT_ENV_KEY]: '   ' }, absent)).toBe(UNKNOWN_COMMIT);
   });
 
   it('reports the commit the build supplied, trimmed', () => {
@@ -69,5 +75,49 @@ describe('readCommit', () => {
 
   it('reads the process environment by default', () => {
     expect(readCommit()).toBe(readCommit(process.env));
+  });
+
+  it('falls back to the build stamp when the build passed no argument', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mission-hub-stamp-'));
+    try {
+      const stampPath = join(dir, 'commit.txt');
+      const sha = 'b'.repeat(40);
+      writeFileSync(stampPath, `${sha}\n`);
+
+      expect(readCommit({}, pathToFileURL(stampPath))).toBe(sha);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers the explicit build argument over the stamp', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mission-hub-stamp-'));
+    try {
+      const stampPath = join(dir, 'commit.txt');
+      const fromFile = 'c'.repeat(40);
+      const fromBuild = 'd'.repeat(40);
+      writeFileSync(stampPath, `${fromFile}\n`);
+
+      expect(
+        readCommit({ [COMMIT_ENV_KEY]: fromBuild }, pathToFileURL(stampPath)),
+      ).toBe(fromBuild);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports unknown when the stamp is missing or carries no revision', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mission-hub-stamp-'));
+    try {
+      expect(
+        readCommit({}, pathToFileURL(join(dir, 'absent.txt'))),
+      ).toBe(UNKNOWN_COMMIT);
+
+      const unknownStamp = join(dir, 'commit.txt');
+      writeFileSync(unknownStamp, `${UNKNOWN_COMMIT}\n`);
+      expect(readCommit({}, pathToFileURL(unknownStamp))).toBe(UNKNOWN_COMMIT);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

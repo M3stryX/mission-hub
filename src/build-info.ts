@@ -22,6 +22,12 @@ export const UNKNOWN_COMMIT = 'unknown';
 
 const PACKAGE_JSON_URL = new URL('../package.json', import.meta.url);
 
+/**
+ * Build stamp written by `scripts/build-commit.cjs` during the image build.
+ * Resolves beside the compiled module: `/app/commit.txt` in the runtime image.
+ */
+const COMMIT_FILE_URL = new URL('../commit.txt', import.meta.url);
+
 let productVersion: string | undefined;
 
 /**
@@ -46,13 +52,29 @@ export function readContractVersion(): string {
 
 /**
  * Commit the running build was made from.
- * Absent or blank build value → `unknown`, never an invented revision.
+ *
+ * Sources, in order:
+ *   1. `MISSION_HUB_COMMIT` — an explicit build argument (CI passes it).
+ *   2. `commit.txt` beside the compiled entry point — written at build time by
+ *      `scripts/build-commit.cjs` from the checkout, which is what makes a
+ *      Dokploy build identify itself without any platform configuration.
+ *   3. `unknown` — never an invented revision.
  */
 export function readCommit(
   env: Record<string, string | undefined> = process.env,
+  commitFileUrl: URL = COMMIT_FILE_URL,
 ): string {
-  const commit = (env[COMMIT_ENV_KEY] ?? '').trim();
-  return commit.length > 0 ? commit : UNKNOWN_COMMIT;
+  const fromEnv = (env[COMMIT_ENV_KEY] ?? '').trim();
+  if (fromEnv.length > 0) return fromEnv;
+
+  try {
+    const fromFile = readFileSync(commitFileUrl, 'utf8').trim();
+    if (fromFile.length > 0 && fromFile !== UNKNOWN_COMMIT) return fromFile;
+  } catch {
+    // No stamp beside the build (a source checkout): fall through to unknown.
+  }
+
+  return UNKNOWN_COMMIT;
 }
 
 function parseVersion(raw: string): string {
