@@ -155,7 +155,7 @@ export const CONTRACT_MCP_TOOLS = [
 /** MCP descriptions are lifecycle docs for models — keep aligned with AGENT_USAGE.md. */
 export const CONTRACT_MCP_TOOL_DESCRIPTIONS = {
   'missions.list':
-    'Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.0.',
+    'Discover durable missions, bounded and paginated: default limit 50, max 200, plus offset, status, stage, parentId and a text query. Each row carries body_excerpt (200 chars) and body_length, never the full body — read one mission with missions.get. Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.0.',
   'missions.get':
     'Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.',
   'missions.create':

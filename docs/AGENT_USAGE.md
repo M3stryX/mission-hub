@@ -35,7 +35,7 @@ Never use `mission.status = in_progress` as a substitute for a claim.
 
 ## 4. Canonical lifecycle
 
-1. **Discover** — `missions.list` (optional `query`) / `missions.get`; read checklist, sources, events.
+1. **Discover** — `missions.list` (bounded and paginated, see §4.1) / `missions.get` (full body); read checklist, sources, events.
 2. **Claim** (when exclusive work is required) — `missions.claim` atomically creates session + `RUNNING` run + claim. One open claim per mission. Active foreign claim → `claim_conflict` (409).
 3. **Heartbeat** — `missions.claim.renew` while working.
 4. **Work** — update checklist/sources; keep business status and lifecycle stage accurate with `missions.update` (`status` + `stage`).
@@ -44,6 +44,29 @@ Never use `mission.status = in_progress` as a substitute for a claim.
    - `completed` — requires ≥1 summary and ≥1 evidence; run → `COMPLETED` in the same transaction
    - `failed` / `abandoned` — run → `FAILED` (refuse if already `COMPLETED`)
 7. **Close business state** — `missions.update` → `done` (or `blocked`/`review`) when the durable goal is finished.
+
+### 4.1 Bounded listing — `missions.list` / `GET /api/v1/missions`
+
+The listing never serializes full mission bodies. It is paginated and filterable on both surfaces; REST and MCP accept the same bounds under two spellings (`q` over REST, `query` over MCP — the other name is refused, not ignored).
+
+| Parameter | REST | MCP | Default | Bounds |
+|---|---|---|---|---|
+| Text filter | `q` | `query` | — | PostgreSQL full-text over title + body |
+| Business status | `status` | `status` | all | `backlog` \| `todo` \| `in_progress` \| `review` \| `done` \| `blocked` |
+| Lifecycle stage | `stage` | `stage` | all | `research` \| `architecture` \| `plan` \| `execution` \| `done` |
+| Parent mission | `parentId` | `parentId` | all | positive integer |
+| Page size | `limit` | `limit` | 50 | 1–200 |
+| Page offset | `offset` | `offset` | 0 | ≥ 0 |
+
+Response shape, identical on both surfaces:
+
+```json
+{ "missions": [], "total": 368, "limit": 50, "offset": 0, "nextOffset": 50 }
+```
+
+Each row carries the mission metadata plus `body_excerpt` (first 200 characters of the body) and `body_length` — **never the full `body`**. Read one mission with `missions.get` when its body matters.
+
+**Why the bounds exist.** Before them, the listing serialized every mission with its full body: 2 003 083 bytes for 368 missions, of which 86% was body text. That payload exceeds the 1 MiB server-sent-event ceiling of the MCP transport, so an unfiltered `missions.list` failed outright with `SSE stream failed: Server-sent event exceeded the 1048576 byte limit` (measured: 6 of 16 calls in a 48h window). Every parameter other than `q` used to be silently ignored, leaving a client no way to bound the response. An out-of-contract value is now refused with `400 invalid_request` instead.
 
 ### Standalone runs
 
