@@ -13,6 +13,7 @@ import {
   ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
   MAX_CLAIM_LEASE_SECONDS,
+  MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
   SelfApprovalError,
   type MissionHubStore,
@@ -135,11 +136,20 @@ export function buildMcpServer(
     'missions.list',
     {
       description: CONTRACT_MCP_TOOL_DESCRIPTIONS['missions.list'],
-      inputSchema: z.object({ query: z.string().optional() }),
+      inputSchema: z.object({
+        query: z.string().optional(),
+        status: z.string().optional(),
+        stage: z.string().optional(),
+        parentId: z.number().int().positive().optional(),
+        limit: z.number().int().min(1).max(MISSION_LIST_MAX_LIMIT).optional(),
+        offset: z.number().int().min(0).optional(),
+      }),
     },
-    async ({ query }) =>
+    async ({ query, status, stage, parentId, limit, offset }) =>
       requireScopes(principal, ['missions:read'])
-        ? toolResult(await store.listMissions(query))
+        ? toolResult(
+            await store.listMissions({ query, status, stage, parentId, limit, offset }),
+          )
         : forbidden(['missions:read']),
   );
 
