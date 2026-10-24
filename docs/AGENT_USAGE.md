@@ -233,3 +233,13 @@ owns inside that mission while that claim is the active one. Rows live in `claim
 - A client that was never delegated is still fenced: `claim_fenced`, HTTP **403** on REST, `toolError` on
   MCP. The code refuses the write; it does not queue it.
 - Naming the claim holder itself is ignored: a client is never its own delegate.
+- **A run belongs to the client that created it** (`execution_runs.client_id`). A delegated client writes on
+  its own runs only; writing into another client's run is refused with `run_not_owned` — HTTP **403** on
+  REST, `toolError` on MCP, body `{ error, runId, ownerClientId }`. The rule holds with or without an active
+  claim: a delegation opens the claim fence, it never grants ownership of a foreign run.
+- The claim holder is the one exception: it may write on any run of its own mission, because
+  `claim.release` needs that right to record the summary and evidence that close the claim's run.
+- Consequence for approvals: a `plan_approval` recorded through the generic `runs.recordSummary` follows the
+  same ownership rule. The dedicated path — `missions.planApproval` / `POST
+  /api/v1/missions/:id/plan-approval` — is the cross-client one, since the approver does not own the
+  planning run.

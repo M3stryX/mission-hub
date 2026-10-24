@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every query parameter other than `q` used to be silently ignored; they are now
   honoured or refused.
 
+- **Run writes are owned by the client that created the run** — `addSummary`, `addEvidence` and
+  `runs.updateStatus` now compare `execution_runs.client_id` with the caller. A client writing into another
+  client's run is refused with `run_not_owned` (HTTP **403**, `toolError` on MCP, body
+  `{ error, runId, ownerClientId }`). The claim holder keeps the right to write on any run of its own
+  mission, because `claim.release` closes the claim's run that way; a delegated client is limited to the
+  runs it owns. Previously no ownership check existed at all: with no active claim, any client holding
+  `summaries:write` could write into any run, and a delegation widened that to every run of the mission.
+  `plan_approval` through the generic `runs.recordSummary` follows the same rule — the cross-client path is
+  the dedicated `missions.planApproval` endpoint.
+
 - **`plan_approval` summaries require `approvals:human`** — the generic summary writers (REST `POST /api/v1/runs/:id/summaries` and MCP `runs.recordSummary`) now refuse `type = "plan_approval"` without that scope, mirroring the dedicated plan-approval endpoint. `plan_not_open` and `self_approval` are still not enforced on the generic path.
 
 - **Boot line names the host allowlist instead of counting it** —

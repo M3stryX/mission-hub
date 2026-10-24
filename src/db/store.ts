@@ -215,6 +215,18 @@ export class ClaimFencedError extends Error {
   }
 }
 
+export class RunNotOwnedError extends Error {
+  readonly runId: number;
+  readonly ownerClientId: string;
+
+  constructor(runId: number, ownerClientId: string) {
+    super('run_not_owned');
+    this.name = 'RunNotOwnedError';
+    this.runId = runId;
+    this.ownerClientId = ownerClientId;
+  }
+}
+
 export class ClaimReleaseIncompleteError extends Error {
   readonly claimId: number;
   readonly runId: number;
@@ -1932,7 +1944,11 @@ async function assertRunMutationAllowed(
     [run.mission_id],
   );
   const activeClaim = active.rows[0];
-  if (activeClaim && activeClaim.client_id !== clientId) {
+  // A run belongs to the client that created it (execution_runs.client_id). Only
+  // the claim holder may act outside that rule, and only on runs of the mission
+  // it holds — releaseClaim needs that right to record its own summary/evidence.
+  const holdsClaim = Boolean(activeClaim && activeClaim.client_id === clientId);
+  if (activeClaim && !holdsClaim) {
     // Delegated run writes (migrations/0007): the claim holder may name the clients it
     // delegates to. The row is bound to the active claim id, so releasing or expiring
     // that claim removes the permission with it.
@@ -1943,6 +1959,10 @@ async function assertRunMutationAllowed(
     if (!delegated.rowCount) {
       throw new ClaimFencedError(run.mission_id, activeClaim.id);
     }
+  }
+
+  if (!holdsClaim && run.client_id !== clientId) {
+    throw new RunNotOwnedError(run.id, run.client_id);
   }
 
   const linked = await client.query<ClaimRow>(

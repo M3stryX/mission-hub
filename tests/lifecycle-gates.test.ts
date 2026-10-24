@@ -246,9 +246,16 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
       expect(res.status).toBe(201);
       expect(body.summary?.type).toBe(type);
     }
-    // plan_approval requires approvals:human scope (approver-token has it)
+    // plan_approval requires approvals:human scope (approver-token has it) and,
+    // since run ownership is enforced, a run the approver itself owns.
+    const approverRunId = await createRun(
+      missionId,
+      'planning',
+      'summary-types-approver',
+      'approver-token',
+    );
     const { res, body } = await recordSummary(
-      runId,
+      approverRunId,
       'plan_approval',
       'recorded plan_approval',
       'approver-token',
@@ -257,7 +264,7 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
     expect(res.status).toBe(201);
     expect(body.summary?.type).toBe('plan_approval');
     const list = await app.request(
-      `http://localhost/api/v1/runs/${runId}/summaries?type=plan_approval`,
+      `http://localhost/api/v1/runs/${approverRunId}/summaries?type=plan_approval`,
       { headers: auth('operator-token') },
     );
     expect(list.status).toBe(200);
@@ -436,7 +443,9 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
     expect(notOpen.status).toBe(409);
     expect((await parseBody(notOpen)).error).toBe('plan_not_open');
 
-    const planRunId = await createRun(missionId, 'planning', 'plan-run');
+    // The planning run belongs to the planner: run ownership is enforced on the
+    // generic summary writer, so the plan_summary must be written on its own run.
+    const planRunId = await createRun(missionId, 'planning', 'plan-run', 'planner-token');
     const planSummary = await recordSummary(
       planRunId,
       'plan_summary',
@@ -472,7 +481,7 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
 
   it('mirrors plan-approval semantics over MCP by construction', async () => {
     const missionId = await createMission('MCP plan approval');
-    const planRunId = await createRun(missionId, 'planning', 'mcp-plan-run');
+    const planRunId = await createRun(missionId, 'planning', 'mcp-plan-run', 'planner-token');
     await recordSummary(
       planRunId,
       'plan_summary',

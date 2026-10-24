@@ -196,4 +196,53 @@ describe.skipIf(!databaseUrl)('claim delegations', () => {
     ]);
     expect(rows.rowCount).toBe(0);
   });
+
+  /**
+   * Run ownership (execution_runs.client_id). A delegation used to open the fence
+   * without checking who owns the run, so a delegated client could write into any
+   * run of the mission. The rule is: the claim holder writes anywhere in its
+   * mission, everyone else writes only on its own runs.
+   */
+  it('refuses a delegated client writing on another client run (run_not_owned)', async () => {
+    const missionId = await createMission();
+    expect((await claim(missionId, coordinator, { delegatedClients: ['delegate-b'] })).status).toBe(
+      201,
+    );
+
+    const foreignRunId = await createRun(missionId, strangerC);
+    const summary = await writeSummary(foreignRunId, delegateB);
+
+    expect(summary.status).toBe(403);
+    const body = (await summary.json()) as { error: string; runId: number; ownerClientId: string };
+    expect(body.error).toBe('run_not_owned');
+    expect(body.runId).toBe(foreignRunId);
+    expect(body.ownerClientId).toBe('stranger-c');
+    expect((await writeEvidence(foreignRunId, delegateB)).status).toBe(403);
+  });
+
+  it('lets the claim holder write on another client run of its mission', async () => {
+    const missionId = await createMission();
+    expect((await claim(missionId, coordinator)).status).toBe(201);
+
+    const foreignRunId = await createRun(missionId, strangerC);
+    // releaseClaim itself depends on this right.
+    expect((await writeSummary(foreignRunId, coordinator)).status).toBe(201);
+  });
+
+  it('refuses a foreign run even without any active claim', async () => {
+    const missionId = await createMission();
+    const foreignRunId = await createRun(missionId, strangerC);
+
+    const summary = await writeSummary(foreignRunId, delegateB);
+    expect(summary.status).toBe(403);
+    expect(((await summary.json()) as { error: string }).error).toBe('run_not_owned');
+  });
+
+  it('lets a client write on its own run without any claim', async () => {
+    const missionId = await createMission();
+    const ownRunId = await createRun(missionId, delegateB);
+
+    expect((await writeSummary(ownRunId, delegateB)).status).toBe(201);
+    expect((await writeEvidence(ownRunId, delegateB)).status).toBe(201);
+  });
 });
