@@ -952,6 +952,13 @@ export class MissionHubStore {
       }
 
       const runId = planningRun.rows[0].id;
+      // Deliberate cross-client write, and the ONLY summary write that skips
+      // assertRunMutationAllowed: an approval must live on the mission's planning run,
+      // which belongs to the planner, never to the approver. The write is bounded by
+      // what the guard would not check anyway — approvals:human scope (route), plan
+      // present (PlanNotOpenError above) and no self-approval (above). Every other
+      // summary/evidence path goes through the ownership check and answers
+      // run_not_owned on a foreign run.
       const result = await client.query<SummaryRow>(
         `INSERT INTO summaries(run_id, type, content, metadata_json, actor, client_id)
          VALUES ($1,'plan_approval'::summary_type,$2,$3::jsonb,$4,$4)

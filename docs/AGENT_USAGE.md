@@ -241,6 +241,10 @@ owns inside that mission while that claim is the active one. Rows live in `claim
   holder as owner, and `claim.release` only *counts* the summary/evidence already present on that run — it
   never appends. Measured in `claimMission` (a new run per claim, any expiry path included) and in
   `releaseClaim` (0 calls to the run guard).
+- `claim_delegations.client_id` stores a client **identifier**, not a verified identity: an unknown id is
+  accepted (deduped, trimmed, self excluded) and stays inert until a client with that id authenticates. If
+  such a client is created while the claim is still active, the delegation becomes live. Delegate only ids
+  you would grant `summaries:write` to.
 - Consequence for approvals: a `plan_approval` recorded through the generic `runs.recordSummary` follows the
   same ownership rule. The dedicated path — `missions.planApproval` / `POST
   /api/v1/missions/:id/plan-approval` — is the cross-client one, since the approver does not own the
