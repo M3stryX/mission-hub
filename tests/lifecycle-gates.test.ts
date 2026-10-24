@@ -64,7 +64,7 @@ const toolErrorOf = (result: ToolOutcome): string | undefined => {
   return (JSON.parse(text) as { error?: string }).error;
 };
 
-describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
+describe.skipIf(!databaseUrl)('Lifecycle gates (v3.1) contract', () => {
   const pool = new Pool({ connectionString: databaseUrl });
   const credentials: ClientCredential[] = [
     {
@@ -189,8 +189,8 @@ describe.skipIf(!databaseUrl)('Lifecycle gates (v3.0) contract', () => {
     await pool.end();
   });
 
-  it('publishes the v3.0 lifecycle surface in the contract inventory', () => {
-    expect(AGENT_USAGE_CONTRACT.version).toBe('v3.0');
+  it('publishes the v3.1 lifecycle surface in the contract inventory', () => {
+    expect(AGENT_USAGE_CONTRACT.version).toBe('v3.1');
     expect(CONTRACT_SCOPES).toContain('approvals:human');
     for (const purpose of newPurposes) {
       expect(CONTRACT_ENUMS.run_purpose).toContain(purpose);

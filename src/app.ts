@@ -424,7 +424,7 @@ export function createApp(
   // protocol of the route being called: `/mcp` keeps the MCP transport's
   // JSON-RPC envelope, every REST route answers a REST body. Dressing a REST
   // refusal in a JSON-RPC envelope hands a REST client an error shape its own
-  // protocol never produces (contract v3.0).
+  // protocol never produces (contract v3.1).
   app.use('*', async (c, next) => {
     if (c.req.path === '/mcp') return next();
     if (isHostAllowed(c.req.header('host'))) return next();
