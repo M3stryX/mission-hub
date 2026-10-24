@@ -22,6 +22,44 @@ export interface MissionRow extends QueryResultRow {
   updated_at: Date;
 }
 
+export interface MissionListOptions {
+  query?: string;
+  status?: string;
+  stage?: string;
+  parentId?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MissionListItem {
+  id: number;
+  title: string;
+  body_excerpt: string | null;
+  body_length: number;
+  status: string;
+  stage: string;
+  priority: number;
+  due_at: string | null;
+  source: string | null;
+  tags: string | null;
+  recurrence: string | null;
+  parent_id: number | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MissionListPage {
+  missions: MissionListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+}
+
+export const MISSION_LIST_DEFAULT_LIMIT = 50;
+export const MISSION_LIST_MAX_LIMIT = 200;
+export const MISSION_BODY_EXCERPT_CHARS = 200;
+
 export interface RunRow extends QueryResultRow {
   id: number;
   mission_id: number;
@@ -408,26 +446,77 @@ export class MissionHubStore {
     return true;
   }
 
-  async listMissions(query?: string): Promise<MissionRow[]> {
-    if (query?.trim()) {
-      const result = await this.pool.query<MissionRow>(
-        `SELECT id, title, body, status, stage, priority, due_at, source, tags, recurrence,
-                parent_id, created_at, updated_at
-         FROM missions
-         WHERE search_vector @@ plainto_tsquery('simple', $1)
-         ORDER BY priority ASC, updated_at DESC`,
-        [query],
+  /**
+   * Bounded mission listing.
+   *
+   * The list endpoint used to serialize every mission with its full body, which
+   * crossed the 1 MiB MCP SSE ceiling and made `missions.list` fail outright.
+   * The listing therefore projects a `body_excerpt` and a `body_length` instead
+   * of the whole `body` (86% of the former payload), and honours limit/offset.
+   * Read a full body with `getMission`.
+   */
+  async listMissions(options: MissionListOptions = {}): Promise<MissionListPage> {
+    const limit = Math.min(
+      Math.max(Math.trunc(options.limit ?? MISSION_LIST_DEFAULT_LIMIT), 1),
+      MISSION_LIST_MAX_LIMIT,
+    );
+    const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    const push = (value: unknown): string => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+
+    if (options.query?.trim()) {
+      conditions.push(
+        `search_vector @@ plainto_tsquery('simple', ${push(options.query.trim())})`,
       );
-      return result.rows;
+    }
+    if (options.status?.trim()) {
+      conditions.push(`status = ${push(options.status.trim())}`);
+    }
+    if (options.stage?.trim()) {
+      conditions.push(`stage = ${push(options.stage.trim())}`);
+    }
+    if (options.parentId != null) {
+      conditions.push(`parent_id = ${push(options.parentId)}`);
     }
 
-    const result = await this.pool.query<MissionRow>(
-      `SELECT id, title, body, status, stage, priority, due_at, source, tags, recurrence,
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countResult = await this.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM missions ${where}`,
+      params,
+    );
+    const total = Number(countResult.rows[0]?.count ?? 0);
+
+    const result = await this.pool.query<MissionListItem>(
+      `SELECT id, title,
+              CASE WHEN body IS NULL THEN NULL
+                   ELSE left(body, ${push(MISSION_BODY_EXCERPT_CHARS)})
+              END AS body_excerpt,
+              COALESCE(length(body), 0)::int AS body_length,
+              status, stage, priority, due_at, source, tags, recurrence,
               parent_id, created_at, updated_at
        FROM missions
-       ORDER BY priority ASC, updated_at DESC`,
+       ${where}
+       ORDER BY priority ASC, updated_at DESC
+       LIMIT ${push(limit)} OFFSET ${push(offset)}`,
+      params,
     );
-    return result.rows;
+
+    const missions = result.rows;
+    const consumed = offset + missions.length;
+
+    return {
+      missions,
+      total,
+      limit,
+      offset,
+      nextOffset: consumed < total ? consumed : null,
+    };
   }
 
   async getMission(id: number): Promise<MissionRow | null> {

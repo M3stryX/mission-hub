@@ -170,7 +170,7 @@
     "clients.revoke"
   ],
   "mcpToolDescriptions": {
-    "missions.list": "Discover durable missions (optional query). Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.0.",
+    "missions.list": "Discover durable missions, bounded and paginated: default limit 50, max 200, plus offset, status, stage, parentId and a text query. Each row carries body_excerpt (200 chars) and body_length, never the full body — read one mission with missions.get. Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.0.",
     "missions.get": "Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.",
     "missions.create": "Create a durable mission (business state). Set status todo when actionable. Does not claim or create a run — call missions.claim when exclusive execution is required.",
     "missions.update": "Patch durable mission fields including business status (backlog…done/blocked) and lifecycle stage (research|architecture|plan|execution|done). Never use status as an execution lock; use missions.claim / renew / release.",
