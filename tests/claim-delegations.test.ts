@@ -247,6 +247,22 @@ describe.skipIf(!databaseUrl)('claim delegations', () => {
     expect((await writeEvidence(ownRunId, delegateB)).status).toBe(201);
   });
 
+  it('refuses a foreign run on runs.updateStatus too', async () => {
+    const missionId = await createMission();
+    expect((await claim(missionId, coordinator, { delegatedClients: ['delegate-b'] })).status).toBe(
+      201,
+    );
+    const foreignRunId = await createRun(missionId, strangerC);
+
+    const res = await app.request(`http://localhost/api/v1/runs/${foreignRunId}/status`, {
+      method: 'PATCH',
+      headers: delegateB,
+      body: JSON.stringify({ status: 'COMPLETED' }),
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('run_not_owned');
+  });
+
   it('mirrors run_not_owned over MCP (toolError, not a silent refusal)', async () => {
     const missionId = await createMission();
     expect((await claim(missionId, coordinator, { delegatedClients: ['delegate-b'] })).status).toBe(
