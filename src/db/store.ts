@@ -1944,11 +1944,7 @@ async function assertRunMutationAllowed(
     [run.mission_id],
   );
   const activeClaim = active.rows[0];
-  // A run belongs to the client that created it (execution_runs.client_id). Only
-  // the claim holder may act outside that rule, and only on runs of the mission
-  // it holds — releaseClaim needs that right to record its own summary/evidence.
-  const holdsClaim = Boolean(activeClaim && activeClaim.client_id === clientId);
-  if (activeClaim && !holdsClaim) {
+  if (activeClaim && activeClaim.client_id !== clientId) {
     // Delegated run writes (migrations/0007): the claim holder may name the clients it
     // delegates to. The row is bound to the active claim id, so releasing or expiring
     // that claim removes the permission with it.
@@ -1961,7 +1957,11 @@ async function assertRunMutationAllowed(
     }
   }
 
-  if (!holdsClaim && run.client_id !== clientId) {
+  // A run belongs to the client that created it. There is no claim-holder exception:
+  // claimMission always creates the claim's run with the holder as `client_id`, and
+  // releaseClaim only COUNTS the summary/evidence the holder already wrote on that
+  // run (it never appends and never calls this guard). Measured, not assumed.
+  if (run.client_id !== clientId) {
     throw new RunNotOwnedError(run.id, run.client_id);
   }
 

@@ -221,13 +221,35 @@ describe.skipIf(!databaseUrl)('claim delegations', () => {
     expect((await writeEvidence(foreignRunId, delegateB)).status).toBe(403);
   });
 
-  it('lets the claim holder write on another client run of its mission', async () => {
+  it('refuses the claim holder a foreign run too — there is no holder exception', async () => {
     const missionId = await createMission();
     expect((await claim(missionId, coordinator)).status).toBe(201);
 
     const foreignRunId = await createRun(missionId, strangerC);
-    // releaseClaim itself depends on this right.
-    expect((await writeSummary(foreignRunId, coordinator)).status).toBe(201);
+    const res = await writeSummary(foreignRunId, coordinator);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('run_not_owned');
+  });
+
+  it('still releases a claim after its holder wrote the claim run (no exception needed)', async () => {
+    // The claim's run is created by claimMission with the holder as owner, so
+    // releaseClaim never needs to write into a foreign run — it only counts.
+    const missionId = await createMission();
+    const claimed = await claim(missionId, coordinator);
+    expect(claimed.status).toBe(201);
+    const claimBody = (await claimed.json()) as {
+      claim: { id: number };
+      run: { id: number };
+    };
+
+    expect((await writeSummary(claimBody.run.id, coordinator)).status).toBe(201);
+    expect((await writeEvidence(claimBody.run.id, coordinator)).status).toBe(201);
+
+    const released = await app.request(
+      `http://localhost/api/v1/claims/${claimBody.claim.id}/release`,
+      { method: 'POST', headers: coordinator, body: JSON.stringify({ reason: 'completed' }) },
+    );
+    expect(released.status).toBe(200);
   });
 
   it('refuses a foreign run even without any active claim', async () => {
