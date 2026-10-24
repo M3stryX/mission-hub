@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`missions.list` is bounded and paginated** — the listing accepts `limit`
+  (default 50, max 200), `offset`, `status`, `stage` and `parentId` on REST and
+  on MCP, and answers `{ missions, total, limit, offset, nextOffset }`. Each row
+  carries `body_excerpt` (first 200 characters) and `body_length` instead of the
+  full `body`; read a complete body with `missions.get`. An out-of-contract value
+  is refused with `400 invalid_request`.
+- **Payload regression gate** — `tests/mission-list-bounds.test.ts` seeds 400
+  missions with 5 000-character bodies and fails if the listing payload exceeds
+  512 KB or ever returns a full body.
+
 - **Boot diagnostics** — the process prints one startup line naming the
   configuration it is actually running with
   (`env=… allowed_hosts=… db=host:port/dbname`), and the initial migration run
@@ -19,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential ever reaches the log.
 
 ### Changed
+
+- **The unfiltered listing no longer exceeds the MCP transport ceiling** — it
+  used to serialize every mission with its full body: 2 003 083 bytes for 368
+  missions, 86 % of it body text, above the 1 MiB server-sent-event limit of the
+  MCP transport, so `missions.list` failed with `SSE stream failed` on 6 of 16
+  calls in a measured 48 h window. The same corpus now answers 23 946 bytes.
+  Every query parameter other than `q` used to be silently ignored; they are now
+  honoured or refused.
+
 - **`plan_approval` summaries require `approvals:human`** — the generic summary writers (REST `POST /api/v1/runs/:id/summaries` and MCP `runs.recordSummary`) now refuse `type = "plan_approval"` without that scope, mirroring the dedicated plan-approval endpoint. `plan_not_open` and `self_approval` are still not enforced on the generic path.
 
 - **Boot line names the host allowlist instead of counting it** —

@@ -29,6 +29,7 @@ import {
   ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
   MAX_CLAIM_LEASE_SECONDS,
+  MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
   SelfApprovalError,
   VERIFY_FIXTURE_TAG,
@@ -68,6 +69,23 @@ const createMissionSchema = z.object({
 });
 
 const updateMissionSchema = createMissionSchema.partial();
+
+/**
+ * Query contract for `GET /api/v1/missions` (contract v3.1).
+ *
+ * Before v3.1 the route accepted only `q` and serialized every mission with its
+ * full body: 2.0 MiB for 368 missions, which is above the 1 MiB MCP SSE ceiling.
+ * Every other parameter was silently ignored, so a client had no way to bound
+ * the response. Bounds are now explicit and validated instead of ignored.
+ */
+const missionListQuerySchema = z.object({
+  q: z.string().trim().min(1).optional(),
+  status: missionStatus.optional(),
+  stage: missionStage.optional(),
+  parentId: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(MISSION_LIST_MAX_LIMIT).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
 
 const runPurpose = z.enum([
   'research',
@@ -553,7 +571,13 @@ export function createApp(
     if (!auth.ok) {
       return c.json(auth.failure.body, auth.failure.status);
     }
-    return c.json({ missions: await store.listMissions(c.req.query('q')) });
+    const parsedQuery = missionListQuerySchema.safeParse(c.req.query());
+    if (!parsedQuery.success) {
+      return c.json({ error: 'invalid_request' }, 400);
+    }
+    // REST spells the text filter `q`; the store and MCP spell it `query`.
+    const { q, ...bounds } = parsedQuery.data;
+    return c.json(await store.listMissions({ query: q, ...bounds }));
   });
 
   app.get('/api/v1/missions/:id', async (c) => {
