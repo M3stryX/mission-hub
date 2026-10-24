@@ -31,6 +31,7 @@ import {
   MAX_CLAIM_LEASE_SECONDS,
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
+  RunNotOwnedError,
   SelfApprovalError,
   VERIFY_FIXTURE_TAG,
   VerifyFixtureRejectedError,
@@ -130,6 +131,7 @@ const claimMissionSchema = z.object({
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   purpose: runPurpose.nullable().optional(),
+  delegatedClients: z.array(z.string().min(1)).max(10).optional(),
 });
 
 const renewClaimSchema = z.object({
@@ -422,7 +424,7 @@ export function createApp(
   // protocol of the route being called: `/mcp` keeps the MCP transport's
   // JSON-RPC envelope, every REST route answers a REST body. Dressing a REST
   // refusal in a JSON-RPC envelope hands a REST client an error shape its own
-  // protocol never produces (contract v3.0).
+  // protocol never produces (contract v3.1).
   app.use('*', async (c, next) => {
     if (c.req.path === '/mcp') return next();
     if (isHostAllowed(c.req.header('host'))) return next();
@@ -1091,6 +1093,16 @@ export function createApp(
           403,
         );
       }
+      if (error instanceof RunNotOwnedError) {
+        return c.json(
+          {
+            error: 'run_not_owned',
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
+          },
+          403,
+        );
+      }
       throw error;
     }
   });
@@ -1154,6 +1166,16 @@ export function createApp(
           403,
         );
       }
+      if (error instanceof RunNotOwnedError) {
+        return c.json(
+          {
+            error: 'run_not_owned',
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
+          },
+          403,
+        );
+      }
       throw error;
     }
   });
@@ -1209,6 +1231,16 @@ export function createApp(
             error: 'claim_fenced',
             missionId: error.missionId,
             claimId: error.claimId,
+          },
+          403,
+        );
+      }
+      if (error instanceof RunNotOwnedError) {
+        return c.json(
+          {
+            error: 'run_not_owned',
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
           },
           403,
         );
