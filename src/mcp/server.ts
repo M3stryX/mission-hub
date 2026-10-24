@@ -15,6 +15,7 @@ import {
   MAX_CLAIM_LEASE_SECONDS,
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
+  RunNotOwnedError,
   SelfApprovalError,
   type MissionHubStore,
 } from '../db/store.js';
@@ -413,6 +414,7 @@ export function buildMcpServer(
         provider: z.string().nullable().optional(),
         model: z.string().nullable().optional(),
         purpose: runPurposeSchema.nullable().optional(),
+        delegatedClients: z.array(z.string().min(1)).max(10).optional(),
       }),
     },
     async (input) => {
@@ -600,6 +602,12 @@ export function buildMcpServer(
             claimId: error.claimId,
           });
         }
+        if (error instanceof RunNotOwnedError) {
+          return toolError('run_not_owned', {
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
+          });
+        }
         throw error;
       }
     },
@@ -676,6 +684,12 @@ export function buildMcpServer(
             claimId: error.claimId,
           });
         }
+        if (error instanceof RunNotOwnedError) {
+          return toolError('run_not_owned', {
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
+          });
+        }
         throw error;
       }
     },
@@ -728,6 +742,12 @@ export function buildMcpServer(
           return toolError('claim_fenced', {
             missionId: error.missionId,
             claimId: error.claimId,
+          });
+        }
+        if (error instanceof RunNotOwnedError) {
+          return toolError('run_not_owned', {
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
           });
         }
         throw error;
