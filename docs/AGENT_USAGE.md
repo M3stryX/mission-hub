@@ -220,3 +220,16 @@ Plan-approval rules:
 - `404` for an unknown mission id.
 
 Plan approval is only **recorded** at contract v3.0: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
+
+### Delegated run writes
+
+A claim holder may name the clients it delegates to (`delegatedClients` on `missions.claim`,
+`POST /api/v1/missions/:id/claim`). A delegated client may then record summaries and evidence on runs it
+owns inside that mission while that claim is the active one. Rows live in `claim_delegations`
+(`claim_id`, `client_id`), one migration `0007_claim_delegations.sql`.
+
+- The permission is bound to the claim id, so releasing or expiring the claim removes it: the next claim
+  starts with no delegations.
+- A client that was never delegated is still fenced: `claim_fenced`, HTTP **403** on REST, `toolError` on
+  MCP. The code refuses the write; it does not queue it.
+- Naming the claim holder itself is ignored: a client is never its own delegate.

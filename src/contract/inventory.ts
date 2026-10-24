@@ -75,6 +75,7 @@ export const CONTRACT_TABLES = [
   'evidence',
   'api_clients',
   'mission_claims',
+  'claim_delegations',
   'schema_migrations',
 ] as const;
 

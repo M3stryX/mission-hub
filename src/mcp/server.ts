@@ -413,6 +413,7 @@ export function buildMcpServer(
         provider: z.string().nullable().optional(),
         model: z.string().nullable().optional(),
         purpose: runPurposeSchema.nullable().optional(),
+        delegatedClients: z.array(z.string().min(1)).max(10).optional(),
       }),
     },
     async (input) => {

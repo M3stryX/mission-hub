@@ -348,6 +348,7 @@ export interface ClaimMissionInput {
   provider?: string | null;
   model?: string | null;
   purpose?: string | null;
+  delegatedClients?: string[];
 }
 
 export interface ClaimResult {
@@ -1461,6 +1462,17 @@ export class MissionHubStore {
         ],
       );
       const claim = claimResult.rows[0];
+      const delegatedClients = [
+        ...new Set((input.delegatedClients ?? []).map((id) => id.trim())),
+      ].filter((id) => id.length > 0 && id !== clientId);
+      if (delegatedClients.length > 0) {
+        await client.query(
+          `INSERT INTO claim_delegations(claim_id, client_id)
+           SELECT $1, unnest($2::text[])
+           ON CONFLICT (claim_id, client_id) DO NOTHING`,
+          [claim.id, delegatedClients],
+        );
+      }
       await client.query(
         `INSERT INTO mission_events(mission_id, actor, kind, payload)
          VALUES ($1, $2, 'claim.acquired', $3::jsonb)`,
@@ -1476,6 +1488,7 @@ export class MissionHubStore {
             expiresAt: claim.expires_at.toISOString(),
             expiredPreviousClaimId,
             expiryDiagnosis,
+            delegatedClients,
           }),
         ],
       );
@@ -1920,7 +1933,16 @@ async function assertRunMutationAllowed(
   );
   const activeClaim = active.rows[0];
   if (activeClaim && activeClaim.client_id !== clientId) {
-    throw new ClaimFencedError(run.mission_id, activeClaim.id);
+    // Delegated run writes (migrations/0007): the claim holder may name the clients it
+    // delegates to. The row is bound to the active claim id, so releasing or expiring
+    // that claim removes the permission with it.
+    const delegated = await client.query(
+      `SELECT 1 FROM claim_delegations WHERE claim_id = $1 AND client_id = $2`,
+      [activeClaim.id, clientId],
+    );
+    if (!delegated.rowCount) {
+      throw new ClaimFencedError(run.mission_id, activeClaim.id);
+    }
   }
 
   const linked = await client.query<ClaimRow>(

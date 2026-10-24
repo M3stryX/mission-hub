@@ -130,6 +130,7 @@ const claimMissionSchema = z.object({
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   purpose: runPurpose.nullable().optional(),
+  delegatedClients: z.array(z.string().min(1)).max(10).optional(),
 });
 
 const renewClaimSchema = z.object({
