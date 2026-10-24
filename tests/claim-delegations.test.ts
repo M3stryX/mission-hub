@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Pool } from 'pg';
 import { createApp } from '../src/app.js';
 import type { ClientCredential, Scope } from '../src/auth/config.js';
@@ -244,5 +245,50 @@ describe.skipIf(!databaseUrl)('claim delegations', () => {
 
     expect((await writeSummary(ownRunId, delegateB)).status).toBe(201);
     expect((await writeEvidence(ownRunId, delegateB)).status).toBe(201);
+  });
+
+  it('mirrors run_not_owned over MCP (toolError, not a silent refusal)', async () => {
+    const missionId = await createMission();
+    expect((await claim(missionId, coordinator, { delegatedClients: ['delegate-b'] })).status).toBe(
+      201,
+    );
+    const foreignRunId = await createRun(missionId, strangerC);
+
+    const connect = async (token: string): Promise<Client> => {
+      const client = new Client(
+        { name: 'claim-delegations-test', version: '1.0.0' },
+        { versionNegotiation: { mode: 'auto' } },
+      );
+      const transport = new StreamableHTTPClientTransport(new URL('http://localhost/mcp'), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const headers = new Headers(request.headers);
+          headers.set('host', 'localhost');
+          return app.fetch(new Request(request, { headers }));
+        },
+      });
+      await client.connect(transport);
+      return client;
+    };
+
+    const delegate = await connect('delegate-b-token');
+    try {
+      const result = (await delegate.callTool({
+        name: 'runs.recordSummary',
+        arguments: { runId: foreignRunId, type: 'agent_self_report', content: 'from the delegate' },
+      })) as unknown as { isError?: boolean; content?: Array<{ text?: string }> };
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(result.content?.[0]?.text ?? '{}') as {
+        error?: string;
+        runId?: number;
+        ownerClientId?: string;
+      };
+      expect(payload.error).toBe('run_not_owned');
+      expect(payload.runId).toBe(foreignRunId);
+      expect(payload.ownerClientId).toBe('stranger-c');
+    } finally {
+      await delegate.close();
+    }
   });
 });
