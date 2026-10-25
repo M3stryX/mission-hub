@@ -252,7 +252,7 @@ describe('Host allowlist middleware', () => {
     expect(response.status).toBe(200);
     // The body shape is owned by tests/health.test.ts; here it proves the
     // request reached the application through the Host allowlist.
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       status: 'ok',
       version: readProductVersion(),
       contract: readContractVersion(),

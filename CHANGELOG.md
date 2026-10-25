@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/health` reports the number of effective approvers** — `approvers: N`, the intersection of
+  `MISSION_HUB_APPROVER_CLIENTS` and the clients declared in `MISSION_HUB_CLIENTS_JSON` (a count, never the
+  ids). A deployment at `approvers: 0` has a dead plan-approval route; previously that state was
+  indistinguishable from a client simply lacking the scope, because both answered the same bare `403`.
+  The boot line now also warns explicitly when no approver is configured, not only when an allowlisted id is
+  unknown. Additive: no contract change.
+
 - **`missions.list` is bounded and paginated** — the listing accepts `limit`
   (default 50, max 200), `offset`, `status`, `stage` and `parentId` on REST and
   on MCP, and answers `{ missions, total, limit, offset, nextOffset }`. Each row
