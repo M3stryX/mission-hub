@@ -74,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defect had survived 137 passing tests. The allowlist applies to **both** credential stores: an
   `MISSION_HUB_CLIENTS_JSON` client is resolved before the database, so granting the scope only on the DB
   branch left every env-issued approver at `403` (caught on staging, fixed here).
+- **The approver allowlist is environment-only, and orphans are named at boot** — `MISSION_HUB_APPROVER_CLIENTS`
+  only promotes a client declared in `MISSION_HUB_CLIENTS_JSON`. A client resolved from the database never
+  receives `approvals:human`, whatever its id or its stored scopes: an id-based allowlist honoured on a DB row
+  would let a `clients:admin` holder mint a client under an allowlisted id and inherit the scope. An allowlisted
+  id matching no environment client is named in the boot line instead of failing silently. The MCP
+  `run_exists` refusal now also asserts the `runId` it carries — the previous test only checked the code, so a
+  mutant that dropped `runId` survived.
 
 ## [3.0.0] - 2026-10-12
 
