@@ -18,6 +18,7 @@ import {
 } from './boot.js';
 import {
   loadAdminToken,
+  loadApproverClients,
   loadClientCredentials,
 } from './auth/config.js';
 import { seedEnvClients } from './auth/resolve.js';
@@ -90,7 +91,13 @@ try {
 }
 
 const store = new MissionHubStore(pool);
-const envCredentials = loadClientCredentials();
+const approverClients = loadApproverClients();
+if (approverClients.size > 0) {
+  console.error(
+    `[mission-hub] approver allowlist (approvals:human) = ${[...approverClients].join(',')}`,
+  );
+}
+const envCredentials = loadClientCredentials(undefined, approverClients);
 const seeded = await seedEnvClients(store, envCredentials);
 if (seeded > 0) {
   console.error(`[mission-hub] seeded ${seeded} client(s) from MISSION_HUB_CLIENTS_JSON`);
@@ -99,6 +106,7 @@ if (seeded > 0) {
 const app = createApp(store, {
   envCredentials,
   adminToken: loadAdminToken(),
+  approverClients,
 });
 
 const port = Number(process.env.PORT ?? 3000);
