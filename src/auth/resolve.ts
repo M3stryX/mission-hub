@@ -78,9 +78,11 @@ export async function resolvePrincipal(
 
   void store.touchClientLastUsed(row.id).catch(() => undefined);
 
-  // A scope stored on the row is never enough: the allowlist decides, on this path
-  // exactly as on the env path above.
-  return withApproverScope({ clientId: row.client_id, scopes }, options.approverClients);
+  // The allowlist is deliberately NOT applied here. It names a client the operator
+  // declared in the environment; honouring it on a database row would let a minted
+  // client inherit the scope by picking an allowlisted id. A DB row never receives
+  // approvals:human, whatever its stored scopes say and whichever id it carries.
+  return { clientId: row.client_id, scopes };
 }
 
 /** HTTP failure an authentication attempt maps to. */
