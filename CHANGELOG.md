@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A replayed `externalRunId` answers `409 run_exists` instead of `500`** — `execution_runs` is unique on
+  `(client_id, runtime, external_run_id)`, and the violation surfaced as an opaque `Internal Server Error`.
+  The refusal now names `externalRunId` and the `runId` that already holds it, on REST and as a `toolError`
+  on MCP. Contract revision **v3.2**: a new refusal code is observable surface.
 - **`approvals:human` was unreachable, so `missions.planApproval` refused everyone** — the scope is
   privileged, and both authentication paths filtered privileged scopes out: `MISSION_HUB_CLIENTS_JSON`
   dropped it at load (`src/auth/config.ts`) and a scope stored on an `api_clients` row was dropped at

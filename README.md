@@ -7,7 +7,7 @@ Standalone **mission + execution-trace** service for agent workflows. Mission Hu
 - **Runs** — transient execution runs per client/agent, optionally typed by purpose (`research`, `implementation`, `architecture`, `planning`, `jev_gate`, …).
 - **Summaries & evidence** — typed run artifacts (`research_report`, `plan_summary`, `plan_approval`, `jev_decision`, …) with provenance metadata and evidence references.
 
-*Mission Hub 0.1.0 — agent contract revision v3.1.* The product version is `0.1.0`; `v3.1` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — agent contract revision v3.2.* The product version is `0.1.0`; `v3.2` is the agent contract/schema revision.
 
 REST ↔ MCP parity is enforced: every agent-facing read/write exists on both surfaces unless documented otherwise. The machine inventory (`src/contract/inventory.ts` → `docs/contract-inventory.json`) tracks enums, scopes, tables, routes and MCP tools; `pnpm test:contract-inventory` (and CI) fail on drift.
 
@@ -30,14 +30,14 @@ export DATABASE_URL='postgres://user:REPLACE_ME@localhost:5432/mission_hub'
 pnpm db:migrate               # apply versioned SQL migrations from migrations/
 
 pnpm dev                      # tsx watch on http://localhost:3000
-curl http://localhost:3000/health   # → {"status":"ok","version":"0.1.0","contract":"v3.1","commit":"unknown","env":"development"}
+curl http://localhost:3000/health   # → {"status":"ok","version":"0.1.0","contract":"v3.2","commit":"unknown","env":"development"}
 curl http://localhost:3000/ready    # → {"status":"ready"}, or 503 {"status":"not_ready"} when the database is unreachable
 ```
 
 **Which code is answering.** `GET /health` also reports the build identity: `version` (read from `package.json`), `contract` (the agent contract revision), `commit` (the commit the running build was made from) and `env`. Compare it with the revision you expect — the check that catches a redeploy which served a cached image, since a stale image keeps reporting its old `commit`:
 
 ```bash
-curl -s http://localhost:3000/health    # → {"status":"ok","version":"0.1.0","contract":"v3.1","commit":"<sha>","env":"staging"}
+curl -s http://localhost:3000/health    # → {"status":"ok","version":"0.1.0","contract":"v3.2","commit":"<sha>","env":"staging"}
 git rev-parse HEAD                      # the revision you expected to be serving
 ```
 
@@ -135,26 +135,26 @@ Admin clients are minted with `pnpm clients create <clientId> --scopes <scope,sc
 
 ## Mission lifecycle
 
-Missions move through a 5-stage lifecycle (`missions.stage`, exposed in the mission payload at contract v3.1 — gate enforcement is still to come):
+Missions move through a 5-stage lifecycle (`missions.stage`, exposed in the mission payload at contract v3.2 — gate enforcement is still to come):
 
 ```text
 research → architecture (Jev gate) → plan (mandatory human approval) → execution → done
 ```
 
 1. **Research** — `purpose = research` run; the canonical `research_report` summary + evidence proves the stage.
-2. **Architecture / Jev gate** — `purpose = architecture` run records a `jev_decision` summary (with Jev evidence on a `jev_gate` run). At contract v3.1 the Hub stores and serves evaluations; it does not evaluate or block.
+2. **Architecture / Jev gate** — `purpose = architecture` run records a `jev_decision` summary (with Jev evidence on a `jev_gate` run). At contract v3.2 the Hub stores and serves evaluations; it does not evaluate or block.
 3. **Plan** — `purpose = planning` run writes a `plan_summary`; a **human** principal (never the plan author) records `plan_approval` via `POST /api/v1/missions/:id/plan-approval` / `missions.planApproval` (scope `approvals:human`).
 4. **Execution** — exclusive work runs under a claim: `missions.claim` (atomic session + run + claim) → heartbeat with `missions.claim.renew` → report with `runs.recordSummary` + `runs.recordEvidence` → `missions.claim.release` (`completed` requires summary + evidence and terminalizes the run `COMPLETED`; `failed`/`abandoned` terminalize `FAILED`).
 5. **Done** — checklist complete and run `COMPLETED`; business status closed with `missions.update` → `done`.
 
-Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v3.1, authoritative over skills).
+Full contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v3.2, authoritative over skills).
 
 ## Autonomous Agent Workflows
 
 Mission Hub ships a runtime-agnostic [Autonomous Agent Kit](docs/AUTONOMOUS_AGENTS.md) for agents that drive missions end-to-end: discover → claim → work → verify → release → writeback → resume.
 
 - **Proven:** the read-only loop (list → get → checklist/sources/events → runs/summaries/evidence) ran end-to-end on a live instance.
-- **Not proven:** no enforced approval gate at contract v3.1 (plan approval is recorded, not enforced), no scheduler-recovery evidence, and no native autonomy loop in the mainstream CLIs (Claude Code, Codex, OpenCode are one-shot; an external driver is required).
+- **Not proven:** no enforced approval gate at contract v3.2 (plan approval is recorded, not enforced), no scheduler-recovery evidence, and no native autonomy loop in the mainstream CLIs (Claude Code, Codex, OpenCode are one-shot; an external driver is required).
 - Kit: [behaviour reference](docs/AUTONOMOUS_AGENTS.md) · [agent roles](docs/AGENT_ROLES.md) · [bootstrap prompt](docs/BOOTSTRAP_PROMPT.md) · [runtime adapters](docs/RUNTIME_ADAPTERS.md)
 - Non-goals: mission close/merge/delete/reprioritize are never autonomous; destructive and production actions need explicit human authorization.
 
@@ -224,12 +224,12 @@ pnpm test:contract-inventory
 - Using `mission.status` as a lock or lease (use claims).
 - Vector search (deferred — Postgres full-text `simple` configuration only).
 - External authentication (deferred — hashed API clients + admin Bearer today).
-- Jev gate enforcement and stage-transition guards (still to come — contract v3.1 exposes `stage` read/write but does not enforce transitions).
+- Jev gate enforcement and stage-transition guards (still to come — contract v3.2 exposes `stage` read/write but does not enforce transitions).
 - Putting secrets, tokens or passwords in chat, commits or memory.
 
 ## Docs & license
 
-- Agent contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v3.1)
+- Agent contract: [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) (contract revision v3.2)
 - Machine inventory: [`docs/contract-inventory.json`](docs/contract-inventory.json)
 - Legacy migration: [`docs/migration.md`](docs/migration.md)
 - Agent guide: [`AGENTS.md`](AGENTS.md)
