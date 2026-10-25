@@ -19,6 +19,27 @@ export interface AuthResolverOptions {
   approverClients?: ReadonlySet<string>;
 }
 
+/**
+ * Adds `approvals:human` when the operator allowlisted this client id.
+ *
+ * The allowlist is the only path to that scope, and it must not depend on which
+ * credential store answered: an env-issued client (`MISSION_HUB_CLIENTS_JSON`) is
+ * resolved before the database is consulted, so applying the allowlist only on the
+ * DB branch silently skipped every env client (measured on staging: an allowlisted
+ * env approver still got `403 insufficient_scope`).
+ */
+function withApproverScope(
+  principal: Principal,
+  approvers: ReadonlySet<string> | undefined,
+): Principal {
+  if (!approvers?.has(principal.clientId)) {
+    return principal;
+  }
+  const scopes = new Set(principal.scopes);
+  scopes.add('approvals:human');
+  return { clientId: principal.clientId, scopes };
+}
+
 export async function resolvePrincipal(
   authorization: string | undefined,
   store: MissionHubStore,
@@ -34,7 +55,7 @@ export async function resolvePrincipal(
     options.envCredentials ?? [],
   );
   if (envPrincipal) {
-    return envPrincipal;
+    return withApproverScope(envPrincipal, options.approverClients);
   }
 
   const token = extractBearerToken(authorization);
@@ -54,18 +75,12 @@ export async function resolvePrincipal(
       scopes.add(scope);
     }
   }
-  // The allowlist is the only path to `approvals:human`: it is not mintable, and a
-  // scope stored in the row alone is filtered out above like any other privileged one.
-  if (options.approverClients?.has(row.client_id)) {
-    scopes.add('approvals:human');
-  }
 
   void store.touchClientLastUsed(row.id).catch(() => undefined);
 
-  return {
-    clientId: row.client_id,
-    scopes,
-  };
+  // A scope stored on the row is never enough: the allowlist decides, on this path
+  // exactly as on the env path above.
+  return withApproverScope({ clientId: row.client_id, scopes }, options.approverClients);
 }
 
 /** HTTP failure an authentication attempt maps to. */
