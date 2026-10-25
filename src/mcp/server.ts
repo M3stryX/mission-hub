@@ -16,6 +16,7 @@ import {
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
   RunNotOwnedError,
+  RunExistsError,
   SelfApprovalError,
   type MissionHubStore,
 } from '../db/store.js';
@@ -564,10 +565,22 @@ export function buildMcpServer(
         purpose: runPurposeSchema.nullable().optional(),
       }),
     },
-    async (input) =>
-      requireScopes(principal, ['runs:write'])
-        ? toolResult(await store.createRun(input, principal.clientId))
-        : forbidden(['runs:write']),
+    async (input) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        return toolResult(await store.createRun(input, principal.clientId));
+      } catch (error) {
+        if (error instanceof RunExistsError) {
+          return toolError('run_exists', {
+            externalRunId: error.externalRunId,
+            runId: error.runId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
