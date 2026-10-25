@@ -31,6 +31,8 @@ import {
   MAX_CLAIM_LEASE_SECONDS,
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
+  RunNotOwnedError,
+  RunExistsError,
   SelfApprovalError,
   VERIFY_FIXTURE_TAG,
   VerifyFixtureRejectedError,
@@ -71,9 +73,9 @@ const createMissionSchema = z.object({
 const updateMissionSchema = createMissionSchema.partial();
 
 /**
- * Query contract for `GET /api/v1/missions` (contract v3.1).
+ * Query contract for `GET /api/v1/missions` (contract v3.2).
  *
- * Before v3.1 the route accepted only `q` and serialized every mission with its
+ * Before v3.2 the route accepted only `q` and serialized every mission with its
  * full body: 2.0 MiB for 368 missions, which is above the 1 MiB MCP SSE ceiling.
  * Every other parameter was silently ignored, so a client had no way to bound
  * the response. Bounds are now explicit and validated instead of ignored.
@@ -130,6 +132,7 @@ const claimMissionSchema = z.object({
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   purpose: runPurpose.nullable().optional(),
+  delegatedClients: z.array(z.string().min(1)).max(10).optional(),
 });
 
 const renewClaimSchema = z.object({
@@ -422,7 +425,7 @@ export function createApp(
   // protocol of the route being called: `/mcp` keeps the MCP transport's
   // JSON-RPC envelope, every REST route answers a REST body. Dressing a REST
   // refusal in a JSON-RPC envelope hands a REST client an error shape its own
-  // protocol never produces (contract v3.0).
+  // protocol never produces (contract v3.2).
   app.use('*', async (c, next) => {
     if (c.req.path === '/mcp') return next();
     if (isHostAllowed(c.req.header('host'))) return next();
@@ -1056,8 +1059,22 @@ export function createApp(
     const principal = auth.principal;
     const parsed = createRunSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
-    const run = await store.createRun(parsed.data, principal.clientId);
-    return c.json({ run }, 201);
+    try {
+      const run = await store.createRun(parsed.data, principal.clientId);
+      return c.json({ run }, 201);
+    } catch (error) {
+      if (error instanceof RunExistsError) {
+        return c.json(
+          {
+            error: 'run_exists',
+            externalRunId: error.externalRunId,
+            runId: error.runId,
+          },
+          409,
+        );
+      }
+      throw error;
+    }
   });
 
   app.patch('/api/v1/runs/:id/status', async (c) => {
@@ -1087,6 +1104,16 @@ export function createApp(
             error: 'claim_fenced',
             missionId: error.missionId,
             claimId: error.claimId,
+          },
+          403,
+        );
+      }
+      if (error instanceof RunNotOwnedError) {
+        return c.json(
+          {
+            error: 'run_not_owned',
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
           },
           403,
         );
@@ -1154,6 +1181,16 @@ export function createApp(
           403,
         );
       }
+      if (error instanceof RunNotOwnedError) {
+        return c.json(
+          {
+            error: 'run_not_owned',
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
+          },
+          403,
+        );
+      }
       throw error;
     }
   });
@@ -1209,6 +1246,16 @@ export function createApp(
             error: 'claim_fenced',
             missionId: error.missionId,
             claimId: error.claimId,
+          },
+          403,
+        );
+      }
+      if (error instanceof RunNotOwnedError) {
+        return c.json(
+          {
+            error: 'run_not_owned',
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
           },
           403,
         );

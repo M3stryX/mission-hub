@@ -93,8 +93,46 @@ export function parseScopes(values: readonly string[]): Scope[] {
   return scopes;
 }
 
+/**
+ * Client ids allowed to hold `approvals:human`.
+ *
+ * The scope stays privileged and mint-forbidden: no `POST /admin/clients` and no
+ * `MISSION_HUB_CLIENTS_JSON` entry can grant it, because a service credential that
+ * can approve its own plans is not an approval. Only this explicit, operator-set
+ * allowlist can — and without it the scope is unreachable from every source, which
+ * is what made `missions.planApproval` answer `403 insufficient_scope` to every
+ * principal (measured on staging, 2026-10-24).
+ */
+export function loadApproverClients(
+  raw = process.env.MISSION_HUB_APPROVER_CLIENTS,
+): Set<string> {
+  return new Set(
+    (raw ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Allowlisted ids that no environment client carries.
+ *
+ * The allowlist grants nothing by itself: it only promotes a client declared in
+ * `MISSION_HUB_CLIENTS_JSON`. A typo therefore becomes a silent `403` on plan
+ * approval — the exact failure this whole mechanism exists to end — so the boot
+ * line has to name it.
+ */
+export function findOrphanApprovers(
+  approvers: ReadonlySet<string>,
+  credentials: readonly ClientCredential[],
+): string[] {
+  const declared = new Set(credentials.map((credential) => credential.clientId));
+  return [...approvers].filter((clientId) => !declared.has(clientId)).sort();
+}
+
 export function loadClientCredentials(
   raw = process.env.MISSION_HUB_CLIENTS_JSON,
+  approvers: ReadonlySet<string> = new Set<string>(),
 ): ClientCredential[] {
   if (!raw) {
     return [];
@@ -112,6 +150,12 @@ export function loadClientCredentials(
         continue;
       }
       if (isPrivilegedScope(scope)) {
+        // `approvals:human` is the one privileged scope an operator may grant, and
+        // only by naming the client id in MISSION_HUB_APPROVER_CLIENTS.
+        if (scope === 'approvals:human' && approvers.has(clientId)) {
+          scopes.add(scope);
+          continue;
+        }
         dropped.push(`${scope}(privileged)`);
         continue;
       }

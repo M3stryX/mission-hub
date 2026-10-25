@@ -17,7 +17,9 @@ import {
   runMigrationsWithRetry,
 } from './boot.js';
 import {
+  findOrphanApprovers,
   loadAdminToken,
+  loadApproverClients,
   loadClientCredentials,
 } from './auth/config.js';
 import { seedEnvClients } from './auth/resolve.js';
@@ -90,7 +92,19 @@ try {
 }
 
 const store = new MissionHubStore(pool);
-const envCredentials = loadClientCredentials();
+const approverClients = loadApproverClients();
+if (approverClients.size > 0) {
+  console.error(
+    `[mission-hub] approver allowlist (approvals:human) = ${[...approverClients].join(',')}`,
+  );
+}
+const envCredentials = loadClientCredentials(undefined, approverClients);
+const orphanApprovers = findOrphanApprovers(approverClients, envCredentials);
+if (orphanApprovers.length > 0) {
+  console.error(
+    `[mission-hub] MISSION_HUB_APPROVER_CLIENTS names no environment client: ${orphanApprovers.join(',')} — those ids keep answering 403 insufficient_scope on plan approval`,
+  );
+}
 const seeded = await seedEnvClients(store, envCredentials);
 if (seeded > 0) {
   console.error(`[mission-hub] seeded ${seeded} client(s) from MISSION_HUB_CLIENTS_JSON`);
@@ -99,6 +113,7 @@ if (seeded > 0) {
 const app = createApp(store, {
   envCredentials,
   adminToken: loadAdminToken(),
+  approverClients,
 });
 
 const port = Number(process.env.PORT ?? 3000);

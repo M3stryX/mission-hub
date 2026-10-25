@@ -15,6 +15,8 @@ import {
   MAX_CLAIM_LEASE_SECONDS,
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
+  RunNotOwnedError,
+  RunExistsError,
   SelfApprovalError,
   type MissionHubStore,
 } from '../db/store.js';
@@ -413,6 +415,7 @@ export function buildMcpServer(
         provider: z.string().nullable().optional(),
         model: z.string().nullable().optional(),
         purpose: runPurposeSchema.nullable().optional(),
+        delegatedClients: z.array(z.string().min(1)).max(10).optional(),
       }),
     },
     async (input) => {
@@ -562,10 +565,22 @@ export function buildMcpServer(
         purpose: runPurposeSchema.nullable().optional(),
       }),
     },
-    async (input) =>
-      requireScopes(principal, ['runs:write'])
-        ? toolResult(await store.createRun(input, principal.clientId))
-        : forbidden(['runs:write']),
+    async (input) => {
+      if (!requireScopes(principal, ['runs:write'])) {
+        return forbidden(['runs:write']);
+      }
+      try {
+        return toolResult(await store.createRun(input, principal.clientId));
+      } catch (error) {
+        if (error instanceof RunExistsError) {
+          return toolError('run_exists', {
+            externalRunId: error.externalRunId,
+            runId: error.runId,
+          });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(
@@ -598,6 +613,12 @@ export function buildMcpServer(
           return toolError('claim_fenced', {
             missionId: error.missionId,
             claimId: error.claimId,
+          });
+        }
+        if (error instanceof RunNotOwnedError) {
+          return toolError('run_not_owned', {
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
           });
         }
         throw error;
@@ -676,6 +697,12 @@ export function buildMcpServer(
             claimId: error.claimId,
           });
         }
+        if (error instanceof RunNotOwnedError) {
+          return toolError('run_not_owned', {
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
+          });
+        }
         throw error;
       }
     },
@@ -728,6 +755,12 @@ export function buildMcpServer(
           return toolError('claim_fenced', {
             missionId: error.missionId,
             claimId: error.claimId,
+          });
+        }
+        if (error instanceof RunNotOwnedError) {
+          return toolError('run_not_owned', {
+            runId: error.runId,
+            ownerClientId: error.ownerClientId,
           });
         }
         throw error;

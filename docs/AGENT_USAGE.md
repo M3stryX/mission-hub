@@ -1,12 +1,12 @@
 # Mission Hub — Agent Usage Contract
 
-Contract-Version: v3.0 (contract revision)  
+Contract-Version: v3.2 (contract revision)  
 Status: active  
 Applies-to: REST `/api/v1/*` and MCP server `mission-hub`  
 Skill pointer: personal/kit skill `mission-control` v3+ **must defer** to this document  
 Related: CLAIM-01 (#195), USAGE-01 (#196), `docs/contract-inventory.json`, `AGENTS.md`
 
-*Mission Hub 0.1.0 — contract revision 3.0.* The product version is `0.1.0`; `v3.0` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision 3.1.* The product version is `0.1.0`; `v3.2` is the agent contract/schema revision.
 
 English only. Bump `Contract-Version` and `agentUsage.version` in the contract inventory together.
 
@@ -117,7 +117,7 @@ Legacy records remain unclassified unless a later explicit migration classifies 
 
 Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidence:*`.  
 `clients:admin` = mint/revoke. `verify:admin` = staging-only fixture cleanup.  
-`approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: only an env-issued credential (`MISSION_HUB_CLIENTS_JSON`) can carry it — clients resolved from `api_clients` drop privileged scopes at authentication.
+`approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: no scope bundle grants it, and a scope stored on an `api_clients` row is dropped at authentication like any other privileged one. The only path is the operator allowlist **`MISSION_HUB_APPROVER_CLIENTS`** (comma-separated client ids): a client named there holds `approvals:human` and nothing more. The allowlist only promotes a client **declared in `MISSION_HUB_CLIENTS_JSON`**: a client resolved from the database never receives `approvals:human`, whatever its id or its stored scopes — otherwise a holder of `clients:admin` could mint a client under an allowlisted id and inherit the scope. An allowlisted id that matches no environment client is named in the boot line, because it would otherwise be exactly the silent `403` this mechanism exists to remove. Before the allowlist existed the scope was unreachable from every source, so the endpoint answered `403 insufficient_scope` to every principal — do not describe this scope as env-granted.
 
 ### Refusal contract
 
@@ -183,7 +183,7 @@ Reusable skills (e.g. `mission-control`) may teach the workflow but **must not**
 
 ## 12. Lifecycle stages
 
-`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. At contract v3.0 it is part of the REST/MCP mission payload: read from `missions.get` / `missions.list`, set at create, and patchable via `missions.update` (REST + MCP). Stage *transitions* remain unguarded — no code path blocks a run, claim, or stage change yet.
+`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. At contract v3.2 it is part of the REST/MCP mission payload: read from `missions.get` / `missions.list`, set at create, and patchable via `missions.update` (REST + MCP). Stage *transitions* remain unguarded — no code path blocks a run, claim, or stage change yet.
 
 | Stage | Run purpose | Artifact that proves the stage | Gate to the next stage (not yet enforced) |
 |-------|-------------|-------------------------------|-------------------------------------------|
@@ -193,15 +193,15 @@ Reusable skills (e.g. `mission-control`) may teach the workflow but **must not**
 | `execution` | `implementation` (existing) | claim / release rules (existing) | existing claim/release semantics |
 | `done` | — | checklist complete + run `COMPLETED` | — |
 
-contract v3.0 limitations (OQ-7):
+contract v3.2 limitations (OQ-7):
 
 - No code path blocks a run, claim, or stage transition — the stage guards are still to come.
 - `stage` is part of the REST/MCP mission payload from this contract revision (read + write); it adds no new persistence beyond migration `0006`.
 - `mission.status` (business state) stays authoritative and is never derived from `stage`.
 
-## 13. Jev gate (record/read only at contract v3.0)
+## 13. Jev gate (record/read only at contract v3.2)
 
-An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v3.0 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is still to come.
+An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v3.2 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is still to come.
 
 | Surface | Endpoint / tool | Semantics |
 |---------|-----------------|-----------|
@@ -219,4 +219,33 @@ Plan-approval rules:
 - `409 self_approval` when the caller is the author of that mission's `plan_summary`.
 - `404` for an unknown mission id.
 
-Plan approval is only **recorded** at contract v3.0: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
+Plan approval is only **recorded** at contract v3.2: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
+
+### Delegated run writes
+
+A claim holder may name the clients it delegates to (`delegatedClients` on `missions.claim`,
+`POST /api/v1/missions/:id/claim`). A delegated client may then record summaries and evidence on runs it
+owns inside that mission while that claim is the active one. Rows live in `claim_delegations`
+(`claim_id`, `client_id`), one migration `0007_claim_delegations.sql`.
+
+- The permission is bound to the claim id, so releasing or expiring the claim removes it: the next claim
+  starts with no delegations.
+- A client that was never delegated is still fenced: `claim_fenced`, HTTP **403** on REST, `toolError` on
+  MCP. The code refuses the write; it does not queue it.
+- Naming the claim holder itself is ignored: a client is never its own delegate.
+- **A run belongs to the client that created it** (`execution_runs.client_id`). A delegated client writes on
+  its own runs only; writing into another client's run is refused with `run_not_owned` — HTTP **403** on
+  REST, `toolError` on MCP, body `{ error, runId, ownerClientId }`. The rule holds with or without an active
+  claim: a delegation opens the claim fence, it never grants ownership of a foreign run.
+- There is **no claim-holder exception**: the holder's own claim run is created by `missions.claim` with the
+  holder as owner, and `claim.release` only *counts* the summary/evidence already present on that run — it
+  never appends. Measured in `claimMission` (a new run per claim, any expiry path included) and in
+  `releaseClaim` (0 calls to the run guard).
+- `claim_delegations.client_id` stores a client **identifier**, not a verified identity: an unknown id is
+  accepted (deduped, trimmed, self excluded) and stays inert until a client with that id authenticates. If
+  such a client is created while the claim is still active, the delegation becomes live. Delegate only ids
+  you would grant `summaries:write` to.
+- Consequence for approvals: a `plan_approval` recorded through the generic `runs.recordSummary` follows the
+  same ownership rule. The dedicated path — `missions.planApproval` / `POST
+  /api/v1/missions/:id/plan-approval` — is the cross-client one, since the approver does not own the
+  planning run.

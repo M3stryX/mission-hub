@@ -9,7 +9,7 @@ import {
 import type { MissionHubStore } from '../src/db/store.js';
 
 /**
- * Contract v3.0 refusal vocabulary (mission #339, defect P2/P6).
+ * Contract v3.2 refusal vocabulary (mission #339, defect P2/P6).
  *
  * `401` used to mean three different things at once — no credential, unknown
  * token, missing scope — because `requirePrincipal()` collapsed the last two

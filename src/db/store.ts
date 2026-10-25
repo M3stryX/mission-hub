@@ -215,6 +215,28 @@ export class ClaimFencedError extends Error {
   }
 }
 
+export class RunNotOwnedError extends Error {
+  readonly runId: number;
+  readonly ownerClientId: string;
+
+  constructor(runId: number, ownerClientId: string) {
+    super('run_not_owned');
+    this.name = 'RunNotOwnedError';
+    this.runId = runId;
+    this.ownerClientId = ownerClientId;
+  }
+}
+
+export class RunExistsError extends Error {
+  constructor(
+    readonly runId: number | null,
+    readonly externalRunId: string,
+  ) {
+    super('run_exists');
+    this.name = 'RunExistsError';
+  }
+}
+
 export class ClaimReleaseIncompleteError extends Error {
   readonly claimId: number;
   readonly runId: number;
@@ -348,6 +370,7 @@ export interface ClaimMissionInput {
   provider?: string | null;
   model?: string | null;
   purpose?: string | null;
+  delegatedClients?: string[];
 }
 
 export interface ClaimResult {
@@ -648,6 +671,29 @@ export class MissionHubStore {
     input: CreateRunInput,
     clientId: string,
   ): Promise<RunRow> {
+    try {
+      return await this.createRunInTransaction(input, clientId);
+    } catch (error) {
+      // `execution_runs` is UNIQUE (client_id, runtime, external_run_id). A client that
+      // replays the same external run id used to get an opaque 500; it now learns the
+      // identifier is taken, and which run already holds it.
+      if (isExternalRunIdConflict(error)) {
+        const existing = await this.pool.query<{ id: number }>(
+          `SELECT id FROM execution_runs
+            WHERE client_id = $1 AND runtime = $2 AND external_run_id = $3
+            LIMIT 1`,
+          [clientId, input.runtime, input.externalRunId],
+        );
+        throw new RunExistsError(existing.rows[0]?.id ?? null, input.externalRunId);
+      }
+      throw error;
+    }
+  }
+
+  private async createRunInTransaction(
+    input: CreateRunInput,
+    clientId: string,
+  ): Promise<RunRow> {
     return this.transaction(async (client) => {
       const session = await client.query<{ id: number }>(
         `INSERT INTO agent_sessions(
@@ -939,6 +985,13 @@ export class MissionHubStore {
       }
 
       const runId = planningRun.rows[0].id;
+      // Deliberate cross-client write, and the ONLY summary write that skips
+      // assertRunMutationAllowed: an approval must live on the mission's planning run,
+      // which belongs to the planner, never to the approver. The write is bounded by
+      // what the guard would not check anyway — approvals:human scope (route), plan
+      // present (PlanNotOpenError above) and no self-approval (above). Every other
+      // summary/evidence path goes through the ownership check and answers
+      // run_not_owned on a foreign run.
       const result = await client.query<SummaryRow>(
         `INSERT INTO summaries(run_id, type, content, metadata_json, actor, client_id)
          VALUES ($1,'plan_approval'::summary_type,$2,$3::jsonb,$4,$4)
@@ -1461,6 +1514,17 @@ export class MissionHubStore {
         ],
       );
       const claim = claimResult.rows[0];
+      const delegatedClients = [
+        ...new Set((input.delegatedClients ?? []).map((id) => id.trim())),
+      ].filter((id) => id.length > 0 && id !== clientId);
+      if (delegatedClients.length > 0) {
+        await client.query(
+          `INSERT INTO claim_delegations(claim_id, client_id)
+           SELECT $1, unnest($2::text[])
+           ON CONFLICT (claim_id, client_id) DO NOTHING`,
+          [claim.id, delegatedClients],
+        );
+      }
       await client.query(
         `INSERT INTO mission_events(mission_id, actor, kind, payload)
          VALUES ($1, $2, 'claim.acquired', $3::jsonb)`,
@@ -1476,6 +1540,7 @@ export class MissionHubStore {
             expiresAt: claim.expires_at.toISOString(),
             expiredPreviousClaimId,
             expiryDiagnosis,
+            delegatedClients,
           }),
         ],
       );
@@ -1858,6 +1923,18 @@ function isTerminalRunStatus(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED';
 }
 
+/** PostgreSQL 23505 on the run's external identifier, as opposed to any other unique key. */
+function isExternalRunIdConflict(error: unknown): boolean {
+  const candidate = error as { code?: string; constraint?: string; message?: string };
+  if (candidate?.code !== '23505') {
+    return false;
+  }
+  // The live constraint is `execution_runs_client_runtime_external_unique`; match the
+  // table as well so the session's own unique key can never be mistaken for it.
+  const text = `${candidate.constraint ?? ''}${candidate.message ?? ''}`;
+  return text.includes('execution_runs') && text.includes('external');
+}
+
 export function diagnoseClaimExpiry(input: {
   claim: ClaimRow;
   run: RunRow;
@@ -1920,7 +1997,24 @@ async function assertRunMutationAllowed(
   );
   const activeClaim = active.rows[0];
   if (activeClaim && activeClaim.client_id !== clientId) {
-    throw new ClaimFencedError(run.mission_id, activeClaim.id);
+    // Delegated run writes (migrations/0007): the claim holder may name the clients it
+    // delegates to. The row is bound to the active claim id, so releasing or expiring
+    // that claim removes the permission with it.
+    const delegated = await client.query(
+      `SELECT 1 FROM claim_delegations WHERE claim_id = $1 AND client_id = $2`,
+      [activeClaim.id, clientId],
+    );
+    if (!delegated.rowCount) {
+      throw new ClaimFencedError(run.mission_id, activeClaim.id);
+    }
+  }
+
+  // A run belongs to the client that created it. There is no claim-holder exception:
+  // claimMission always creates the claim's run with the holder as `client_id`, and
+  // releaseClaim only COUNTS the summary/evidence the holder already wrote on that
+  // run (it never appends and never calls this guard). Measured, not assumed.
+  if (run.client_id !== clientId) {
+    throw new RunNotOwnedError(run.id, run.client_id);
   }
 
   const linked = await client.query<ClaimRow>(

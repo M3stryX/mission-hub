@@ -38,11 +38,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every query parameter other than `q` used to be silently ignored; they are now
   honoured or refused.
 
+- **Run writes are owned by the client that created the run** — `addSummary`, `addEvidence` and
+  `runs.updateStatus` now compare `execution_runs.client_id` with the caller. A client writing into another
+  client's run is refused with `run_not_owned` (HTTP **403**, `toolError` on MCP, body
+  `{ error, runId, ownerClientId }`), claim holder included: `missions.claim` creates the claim's run with the
+  holder as owner and `claim.release` only counts what is already there, so no exception is needed
+  (measured — 0 calls to the guard from `releaseClaim`). Previously no ownership check existed at all: with
+  no active claim, any client holding `summaries:write` could write into any run, and a delegation widened
+  that to every run of the mission. `plan_approval` through the generic `runs.recordSummary` follows the same
+  rule — the cross-client path is the dedicated `missions.planApproval` endpoint.
+
 - **`plan_approval` summaries require `approvals:human`** — the generic summary writers (REST `POST /api/v1/runs/:id/summaries` and MCP `runs.recordSummary`) now refuse `type = "plan_approval"` without that scope, mirroring the dedicated plan-approval endpoint. `plan_not_open` and `self_approval` are still not enforced on the generic path.
 
 - **Boot line names the host allowlist instead of counting it** —
   `allowed_hosts=2` becomes `allowed_hosts=mission-hub.lan,…`, and the database
   target is added to the same line.
+
+### Fixed
+
+- **A replayed `externalRunId` answers `409 run_exists` instead of `500`** — `execution_runs` is unique on
+  `(client_id, runtime, external_run_id)`, and the violation surfaced as an opaque `Internal Server Error`.
+  The refusal now names `externalRunId` and the `runId` that already holds it, on REST and as a `toolError`
+  on MCP. Contract revision **v3.2**: a new refusal code is observable surface.
+- **`approvals:human` was unreachable, so `missions.planApproval` refused everyone** — the scope is
+  privileged, and both authentication paths filtered privileged scopes out: `MISSION_HUB_CLIENTS_JSON`
+  dropped it at load (`src/auth/config.ts`) and a scope stored on an `api_clients` row was dropped at
+  authentication (`src/auth/resolve.ts`). The dedicated endpoint and `runs.recordSummary` with
+  `type = "plan_approval"` therefore answered `403 insufficient_scope` to every principal, whatever the
+  configuration said — measured on staging on 2026-10-24 with a client inserted with the scope in its row.
+  Fixed with one explicit path: the operator allowlist **`MISSION_HUB_APPROVER_CLIENTS`** (comma-separated
+  client ids). A client named there holds `approvals:human` and nothing else; the scope stays
+  mint-forbidden (`POST /api/v1/admin/clients` still answers `invalid_scopes`) and stays filtered for every
+  other client. The allowlist is named once at boot. Regression tests live in
+  `tests/approver-scope.test.ts` and exercise the real resolver, not injected credentials — which is why the
+  defect had survived 137 passing tests. The allowlist applies to **both** credential stores: an
+  `MISSION_HUB_CLIENTS_JSON` client is resolved before the database, so granting the scope only on the DB
+  branch left every env-issued approver at `403` (caught on staging, fixed here).
+- **The approver allowlist is environment-only, and orphans are named at boot** — `MISSION_HUB_APPROVER_CLIENTS`
+  only promotes a client declared in `MISSION_HUB_CLIENTS_JSON`. A client resolved from the database never
+  receives `approvals:human`, whatever its id or its stored scopes: an id-based allowlist honoured on a DB row
+  would let a `clients:admin` holder mint a client under an allowlisted id and inherit the scope. An allowlisted
+  id matching no environment client is named in the boot line instead of failing silently. The MCP
+  `run_exists` refusal now also asserts the `runId` it carries — the previous test only checked the code, so a
+  mutant that dropped `runId` survived.
+
 ## [3.0.0] - 2026-10-12
 
 ### Changed

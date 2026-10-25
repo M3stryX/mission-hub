@@ -15,6 +15,29 @@ import type { MissionHubStore } from '../db/store.js';
 export interface AuthResolverOptions {
   envCredentials?: readonly ClientCredential[];
   adminToken?: string;
+  /** Client ids the operator allowlisted for `approvals:human` (and nothing else). */
+  approverClients?: ReadonlySet<string>;
+}
+
+/**
+ * Adds `approvals:human` when the operator allowlisted this client id.
+ *
+ * The allowlist is the only path to that scope, and it must not depend on which
+ * credential store answered: an env-issued client (`MISSION_HUB_CLIENTS_JSON`) is
+ * resolved before the database is consulted, so applying the allowlist only on the
+ * DB branch silently skipped every env client (measured on staging: an allowlisted
+ * env approver still got `403 insufficient_scope`).
+ */
+function withApproverScope(
+  principal: Principal,
+  approvers: ReadonlySet<string> | undefined,
+): Principal {
+  if (!approvers?.has(principal.clientId)) {
+    return principal;
+  }
+  const scopes = new Set(principal.scopes);
+  scopes.add('approvals:human');
+  return { clientId: principal.clientId, scopes };
 }
 
 export async function resolvePrincipal(
@@ -32,7 +55,7 @@ export async function resolvePrincipal(
     options.envCredentials ?? [],
   );
   if (envPrincipal) {
-    return envPrincipal;
+    return withApproverScope(envPrincipal, options.approverClients);
   }
 
   const token = extractBearerToken(authorization);
@@ -55,10 +78,11 @@ export async function resolvePrincipal(
 
   void store.touchClientLastUsed(row.id).catch(() => undefined);
 
-  return {
-    clientId: row.client_id,
-    scopes,
-  };
+  // The allowlist is deliberately NOT applied here. It names a client the operator
+  // declared in the environment; honouring it on a database row would let a minted
+  // client inherit the scope by picking an allowlisted id. A DB row never receives
+  // approvals:human, whatever its stored scopes say and whichever id it carries.
+  return { clientId: row.client_id, scopes };
 }
 
 /** HTTP failure an authentication attempt maps to. */
