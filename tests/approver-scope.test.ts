@@ -6,6 +6,7 @@ import {
   loadClientCredentials,
   type Scope,
 } from '../src/auth/config.js';
+import { resolvePrincipal } from '../src/auth/resolve.js';
 import { MissionHubStore } from '../src/db/store.js';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -49,6 +50,29 @@ describe('approver allowlist parsing', () => {
 });
 
 describe.skipIf(!databaseUrl)('approver allowlist over the real auth path', () => {
+  it('grants approvals:human to an allowlisted ENV client that never asked for it', async () => {
+    // Regression: an env credential is resolved before the DB is consulted, so an
+    // allowlist applied only on the DB branch left every env approver at 403.
+    const store = new MissionHubStore(pool);
+    const envCredentials = [
+      { clientId: 'env-approver', token: 'env-approver-token', scopes: new Set(baseScopes) },
+      { clientId: 'env-other', token: 'env-other-token', scopes: new Set(baseScopes) },
+    ];
+    const approvers = new Set(['env-approver']);
+
+    const allowed = await resolvePrincipal('Bearer env-approver-token', store, {
+      envCredentials,
+      approverClients: approvers,
+    });
+    expect(allowed?.scopes.has('approvals:human')).toBe(true);
+
+    const refused = await resolvePrincipal('Bearer env-other-token', store, {
+      envCredentials,
+      approverClients: approvers,
+    });
+    expect(refused?.scopes.has('approvals:human')).toBe(false);
+  });
+
   const pool = new Pool({ connectionString: databaseUrl });
 
   /** Fresh app + store. `approvers` is the operator allowlist for this instance. */
