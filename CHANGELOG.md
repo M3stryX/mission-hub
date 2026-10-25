@@ -67,7 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mint-forbidden (`POST /api/v1/admin/clients` still answers `invalid_scopes`) and stays filtered for every
   other client. The allowlist is named once at boot. Regression tests live in
   `tests/approver-scope.test.ts` and exercise the real resolver, not injected credentials — which is why the
-  defect had survived 137 passing tests.
+  defect had survived 137 passing tests. The allowlist applies to **both** credential stores: an
+  `MISSION_HUB_CLIENTS_JSON` client is resolved before the database, so granting the scope only on the DB
+  branch left every env-issued approver at `403` (caught on staging, fixed here).
 
 ## [3.0.0] - 2026-10-12
 
