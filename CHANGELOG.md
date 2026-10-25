@@ -53,6 +53,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Boot line names the host allowlist instead of counting it** —
   `allowed_hosts=2` becomes `allowed_hosts=mission-hub.lan,…`, and the database
   target is added to the same line.
+
+### Fixed
+
+- **`approvals:human` was unreachable, so `missions.planApproval` refused everyone** — the scope is
+  privileged, and both authentication paths filtered privileged scopes out: `MISSION_HUB_CLIENTS_JSON`
+  dropped it at load (`src/auth/config.ts`) and a scope stored on an `api_clients` row was dropped at
+  authentication (`src/auth/resolve.ts`). The dedicated endpoint and `runs.recordSummary` with
+  `type = "plan_approval"` therefore answered `403 insufficient_scope` to every principal, whatever the
+  configuration said — measured on staging on 2026-10-24 with a client inserted with the scope in its row.
+  Fixed with one explicit path: the operator allowlist **`MISSION_HUB_APPROVER_CLIENTS`** (comma-separated
+  client ids). A client named there holds `approvals:human` and nothing else; the scope stays
+  mint-forbidden (`POST /api/v1/admin/clients` still answers `invalid_scopes`) and stays filtered for every
+  other client. The allowlist is named once at boot. Regression tests live in
+  `tests/approver-scope.test.ts` and exercise the real resolver, not injected credentials — which is why the
+  defect had survived 137 passing tests.
+
 ## [3.0.0] - 2026-10-12
 
 ### Changed

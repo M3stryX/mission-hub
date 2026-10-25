@@ -15,6 +15,8 @@ import type { MissionHubStore } from '../db/store.js';
 export interface AuthResolverOptions {
   envCredentials?: readonly ClientCredential[];
   adminToken?: string;
+  /** Client ids the operator allowlisted for `approvals:human` (and nothing else). */
+  approverClients?: ReadonlySet<string>;
 }
 
 export async function resolvePrincipal(
@@ -51,6 +53,11 @@ export async function resolvePrincipal(
     if (isScope(scope) && !isPrivilegedScope(scope)) {
       scopes.add(scope);
     }
+  }
+  // The allowlist is the only path to `approvals:human`: it is not mintable, and a
+  // scope stored in the row alone is filtered out above like any other privileged one.
+  if (options.approverClients?.has(row.client_id)) {
+    scopes.add('approvals:human');
   }
 
   void store.touchClientLastUsed(row.id).catch(() => undefined);
