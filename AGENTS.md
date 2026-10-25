@@ -7,10 +7,10 @@ Standalone **mission + execution-trace** service (Hono + PostgreSQL + MCP).
 | GitHub | [M3stryX/mission-hub](https://github.com/M3stryX/mission-hub) |
 | Prod | `mission-hub.lan` (Dokploy app `mission-hub`, branch `main`) |
 | Staging | `mission-hub-staging.lan` (Dokploy app `mission-hub-staging`, branch `staging`) |
-| Auth | Option A — hashed API clients in Postgres (`clients:admin` mint/revoke) |
-| Agent contract | [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) **v2.0** (contract revision, authoritative over skills) |
+| Auth | Option A — hashed API clients in Postgres (`clients:admin` mint/revoke); `approvals:human` only via the `MISSION_HUB_APPROVER_CLIENTS` allowlist |
+| Agent contract | [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) **v3.2** (contract revision, authoritative over skills) |
 
-*Mission Hub 0.1.0 — contract revision v2.0.* The product version is `0.1.0`; `v2.0` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision v3.2.* The product version is `0.1.0`; `v3.2` is the agent contract/schema revision.
 
 ## Non-goals (do not reopen without explicit operator ask)
 
