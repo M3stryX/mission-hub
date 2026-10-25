@@ -227,6 +227,16 @@ export class RunNotOwnedError extends Error {
   }
 }
 
+export class RunExistsError extends Error {
+  constructor(
+    readonly runId: number | null,
+    readonly externalRunId: string,
+  ) {
+    super('run_exists');
+    this.name = 'RunExistsError';
+  }
+}
+
 export class ClaimReleaseIncompleteError extends Error {
   readonly claimId: number;
   readonly runId: number;
@@ -658,6 +668,29 @@ export class MissionHubStore {
   }
 
   async createRun(
+    input: CreateRunInput,
+    clientId: string,
+  ): Promise<RunRow> {
+    try {
+      return await this.createRunInTransaction(input, clientId);
+    } catch (error) {
+      // `execution_runs` is UNIQUE (client_id, runtime, external_run_id). A client that
+      // replays the same external run id used to get an opaque 500; it now learns the
+      // identifier is taken, and which run already holds it.
+      if (isExternalRunIdConflict(error)) {
+        const existing = await this.pool.query<{ id: number }>(
+          `SELECT id FROM execution_runs
+            WHERE client_id = $1 AND runtime = $2 AND external_run_id = $3
+            LIMIT 1`,
+          [clientId, input.runtime, input.externalRunId],
+        );
+        throw new RunExistsError(existing.rows[0]?.id ?? null, input.externalRunId);
+      }
+      throw error;
+    }
+  }
+
+  private async createRunInTransaction(
     input: CreateRunInput,
     clientId: string,
   ): Promise<RunRow> {
@@ -1888,6 +1921,18 @@ function toPublicClient(row: ApiClientRow): ApiClientPublic {
 
 function isTerminalRunStatus(status: string): boolean {
   return status === 'COMPLETED' || status === 'FAILED';
+}
+
+/** PostgreSQL 23505 on the run's external identifier, as opposed to any other unique key. */
+function isExternalRunIdConflict(error: unknown): boolean {
+  const candidate = error as { code?: string; constraint?: string; message?: string };
+  if (candidate?.code !== '23505') {
+    return false;
+  }
+  // The live constraint is `execution_runs_client_runtime_external_unique`; match the
+  // table as well so the session's own unique key can never be mistaken for it.
+  const text = `${candidate.constraint ?? ''}${candidate.message ?? ''}`;
+  return text.includes('execution_runs') && text.includes('external');
 }
 
 export function diagnoseClaimExpiry(input: {

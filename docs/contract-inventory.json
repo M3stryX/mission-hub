@@ -1,6 +1,6 @@
 {
   "agentUsage": {
-    "version": "v3.1",
+    "version": "v3.2",
     "path": "docs/AGENT_USAGE.md"
   },
   "enums": {
@@ -171,7 +171,7 @@
     "clients.revoke"
   ],
   "mcpToolDescriptions": {
-    "missions.list": "Discover durable missions, bounded and paginated: default limit 50, max 200, plus offset, status, stage, parentId and a text query. Each row carries body_excerpt (200 chars) and body_length, never the full body — read one mission with missions.get. Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.1.",
+    "missions.list": "Discover durable missions, bounded and paginated: default limit 50, max 200, plus offset, status, stage, parentId and a text query. Each row carries body_excerpt (200 chars) and body_length, never the full body — read one mission with missions.get. Prefer list/get before creating duplicates. Business status is not a lock — use claims for exclusive work. See docs/AGENT_USAGE.md v3.2.",
     "missions.get": "Get one durable mission by id. Read checklist/sources/events next for context before claiming or updating.",
     "missions.create": "Create a durable mission (business state). Set status todo when actionable. Does not claim or create a run — call missions.claim when exclusive execution is required.",
     "missions.update": "Patch durable mission fields including business status (backlog…done/blocked) and lifecycle stage (research|architecture|plan|execution|done). Never use status as an execution lock; use missions.claim / renew / release.",
@@ -184,11 +184,11 @@
     "missions.sources.remove": "Remove a source owned by the mission.",
     "missions.events.list": "List append-only mission audit events (includes claim.acquired/renewed/expired/released and expiry diagnosis).",
     "missions.claim.get": "Get the active non-expired claim for a mission, if any. Null means the mission is free to claim.",
-    "missions.claim": "Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v3.1.",
+    "missions.claim": "Atomically claim a mission with a lease and create the linked RUNNING execution run + session. One open claim per mission; conflict → claim_conflict. Prefer this over runs.create when exclusive work is required. See docs/AGENT_USAGE.md v3.2.",
     "missions.claim.renew": "Renew/heartbeat an owned active claim lease. Fails if not owned, already released, or expired.",
     "missions.claim.release": "Release an owned claim. completed requires summary+evidence and terminalizes the run COMPLETED; failed|abandoned terminalizes FAILED. Couples claim and run in one transaction.",
     "runs.list": "List execution runs for a mission (newest first), optionally filtered by typed purpose. Legacy runs may have purpose=null.",
-    "runs.create": "Create a run without claiming, optionally with typed purpose (research|implementation|runtime_verification|independent_review|incident_analysis|maintenance|migration|benchmark|other|architecture|planning|jev_gate). Prefer missions.claim for exclusive work.",
+    "runs.create": "Create a run without claiming, optionally with typed purpose (research|implementation|runtime_verification|independent_review|incident_analysis|maintenance|migration|benchmark|other|architecture|planning|jev_gate). Refuses a replayed externalRunId with run_exists (409 REST, toolError on MCP) naming the run that already holds it. Prefer missions.claim for exclusive work.",
     "runs.updateStatus": "Update run status (PENDING|RUNNING|COMPLETED|FAILED). After claim expiry/reclaim, previous owners are fenced (claim_fenced). Prefer claim.release for terminalization on claimed work.",
     "research.listReports": "List all research_report summaries for research-purpose runs on a mission, newest first. The first item is canonical; older reports remain visible.",
     "research.getCanonicalReport": "Return the canonical research report for a mission: the newest research_report summary attached to a run with purpose=research, or null.",
@@ -197,7 +197,7 @@
     "runs.listSummaries": "List summaries for a run, optionally filtered by summary type.",
     "runs.recordEvidence": "Append evidence (kind, label, uri, metadata). When research taxonomy is supplied, source_type must be one of observed_runtime|real_data|code_config|internal_doc|external_primary|external_community|inference.",
     "runs.listEvidence": "List evidence references for a run.",
-    "jev.listEvaluations": "List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is not implemented yet. See docs/AGENT_USAGE.md v3.1.",
+    "jev.listEvaluations": "List jev_decision summaries for a mission, newest first, optionally filtered by metadata.checkpoint. Record/read only — Jev gate enforcement is not implemented yet. See docs/AGENT_USAGE.md v3.2.",
     "jev.getGateStatus": "List recorded jev_decision summaries across all missions (unfiltered gate view). Record/read only — gate enforcement is not implemented yet.",
     "missions.planApproval": "Record a human plan approval (summary_type=plan_approval) for a mission. Requires the mint-forbidden approvals:human scope. Fails plan_not_open when the mission has no purpose=planning run, self_approval when the approver authored the plan_summary.",
     "clients.list": "List API clients (clientId, scopes, createdAt, revokedAt — never token hashes). Requires clients:admin; a scoped service client receives forbidden with required=[\"clients:admin\"].",

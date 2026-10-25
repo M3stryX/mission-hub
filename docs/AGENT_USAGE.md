@@ -1,12 +1,12 @@
 # Mission Hub — Agent Usage Contract
 
-Contract-Version: v3.1 (contract revision)  
+Contract-Version: v3.2 (contract revision)  
 Status: active  
 Applies-to: REST `/api/v1/*` and MCP server `mission-hub`  
 Skill pointer: personal/kit skill `mission-control` v3+ **must defer** to this document  
 Related: CLAIM-01 (#195), USAGE-01 (#196), `docs/contract-inventory.json`, `AGENTS.md`
 
-*Mission Hub 0.1.0 — contract revision 3.1.* The product version is `0.1.0`; `v3.1` is the agent contract/schema revision.
+*Mission Hub 0.1.0 — contract revision 3.1.* The product version is `0.1.0`; `v3.2` is the agent contract/schema revision.
 
 English only. Bump `Contract-Version` and `agentUsage.version` in the contract inventory together.
 
@@ -183,7 +183,7 @@ Reusable skills (e.g. `mission-control`) may teach the workflow but **must not**
 
 ## 12. Lifecycle stages
 
-`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. At contract v3.1 it is part of the REST/MCP mission payload: read from `missions.get` / `missions.list`, set at create, and patchable via `missions.update` (REST + MCP). Stage *transitions* remain unguarded — no code path blocks a run, claim, or stage change yet.
+`missions.stage` (enum `mission_stage`, default `research`, added by migration `0006`) records where a mission sits in the 5-stage lifecycle. At contract v3.2 it is part of the REST/MCP mission payload: read from `missions.get` / `missions.list`, set at create, and patchable via `missions.update` (REST + MCP). Stage *transitions* remain unguarded — no code path blocks a run, claim, or stage change yet.
 
 | Stage | Run purpose | Artifact that proves the stage | Gate to the next stage (not yet enforced) |
 |-------|-------------|-------------------------------|-------------------------------------------|
@@ -193,15 +193,15 @@ Reusable skills (e.g. `mission-control`) may teach the workflow but **must not**
 | `execution` | `implementation` (existing) | claim / release rules (existing) | existing claim/release semantics |
 | `done` | — | checklist complete + run `COMPLETED` | — |
 
-contract v3.1 limitations (OQ-7):
+contract v3.2 limitations (OQ-7):
 
 - No code path blocks a run, claim, or stage transition — the stage guards are still to come.
 - `stage` is part of the REST/MCP mission payload from this contract revision (read + write); it adds no new persistence beyond migration `0006`.
 - `mission.status` (business state) stays authoritative and is never derived from `stage`.
 
-## 13. Jev gate (record/read only at contract v3.1)
+## 13. Jev gate (record/read only at contract v3.2)
 
-An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v3.1 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is still to come.
+An architecture run records its Jev evaluation as `summary_type = jev_decision` (metadata may carry `checkpoint`) on a `purpose = jev_gate` run, alongside evidence (kind `jev_evaluation`). At contract v3.2 Mission Hub stores and serves that evaluation; it does not evaluate or block anything — the gate itself is still to come.
 
 | Surface | Endpoint / tool | Semantics |
 |---------|-----------------|-----------|
@@ -219,7 +219,7 @@ Plan-approval rules:
 - `409 self_approval` when the caller is the author of that mission's `plan_summary`.
 - `404` for an unknown mission id.
 
-Plan approval is only **recorded** at contract v3.1: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
+Plan approval is only **recorded** at contract v3.2: it does not auto-advance `missions.stage` — stage stays a manually-patched field via `missions.update`.
 
 ### Delegated run writes
 
