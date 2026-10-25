@@ -87,7 +87,9 @@ describe.skipIf(!databaseUrl)('duplicate externalRunId', () => {
 
   it('mirrors the refusal over MCP as a toolError, not a transport error', async () => {
     const missionId = await createMission();
-    expect((await createRun(missionId, 'ext-mcp', 'sess-mcp')).status).toBe(201);
+    const first = await createRun(missionId, 'ext-mcp', 'sess-mcp');
+    expect(first.status).toBe(201);
+    const firstRunId = ((await first.json()) as { run: { id: number } }).run.id;
 
     const res = await app.request('http://localhost/mcp', {
       method: 'POST',
@@ -118,6 +120,12 @@ describe.skipIf(!databaseUrl)('duplicate externalRunId', () => {
       result: { isError?: boolean; content: { text: string }[] };
     };
     expect(payload.result.isError).toBe(true);
-    expect(payload.result.content[0].text).toContain('run_exists');
+    const errorText = payload.result.content[0].text;
+    expect(errorText).toContain('run_exists');
+    // The whole point of the v3.2 refusal is to name the run that already holds the
+    // identifier. Asserting only the error code let a mutant that drops runId pass.
+    const error = JSON.parse(errorText) as { externalRunId?: string; runId?: number };
+    expect(error.externalRunId).toBe('ext-mcp');
+    expect(error.runId).toBe(firstRunId);
   });
 });

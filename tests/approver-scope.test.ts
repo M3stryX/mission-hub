@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createApp } from '../src/app.js';
 import {
+  findOrphanApprovers,
   loadApproverClients,
   loadClientCredentials,
   type Scope,
@@ -46,6 +47,17 @@ describe('approver allowlist parsing', () => {
     });
     const [credential] = loadClientCredentials(raw, new Set(['someone-else']));
     expect(credential.scopes.has('approvals:human')).toBe(false);
+  });
+
+  it('names allowlisted ids that no environment client declares', () => {
+    const raw = JSON.stringify({
+      'declared-approver': { token: 't1', scopes: [...baseScopes] },
+    });
+    const credentials = loadClientCredentials(raw, new Set(['declared-approver', 'typo-approver']));
+    expect(findOrphanApprovers(new Set(['declared-approver', 'typo-approver']), credentials)).toEqual([
+      'typo-approver',
+    ]);
+    expect(findOrphanApprovers(new Set(['declared-approver']), credentials)).toEqual([]);
   });
 });
 
@@ -132,23 +144,17 @@ describe.skipIf(!databaseUrl)('approver allowlist over the real auth path', () =
     return ((await res.json()) as { run: { id: number } }).run.id;
   }
 
-  it('lets an allowlisted DB client record a plan approval that a non-allowlisted one cannot', async () => {
+  it('refuses a DB client even when its id is allowlisted: the allowlist only promotes env clients', async () => {
+    // The allowlist names a client the operator declared in the environment. Applying
+    // it to a database row would let anyone holding clients:admin mint a client under
+    // an allowlisted id and inherit approvals:human. So the DB path never receives it.
     const { app, store } = build(['approver-db']);
     const planner = await store.createClient('planner-db', baseScopes);
-    // The scope is written to the row on purpose: the allowlist must be what decides,
-    // not the stored scope (which the resolver filters as privileged).
-    const approver = await store.createClient('approver-db', [
-      ...baseScopes,
-      'approvals:human',
-    ]);
-    const bystander = await store.createClient('bystander-db', [
-      ...baseScopes,
-      'approvals:human',
-    ]);
+    const listed = await store.createClient('approver-db', [...baseScopes, 'approvals:human']);
 
     const missionId = await createMission(app, planner.token);
     const planRunId = await createRun(app, missionId, planner.token, 'planning');
-    const plan = await app.request(
+    const resumePlan = await app.request(
       `http://localhost/api/v1/runs/${planRunId}/summaries`,
       {
         method: 'POST',
@@ -156,31 +162,18 @@ describe.skipIf(!databaseUrl)('approver allowlist over the real auth path', () =
         body: JSON.stringify({ type: 'plan_summary', content: 'Execution plan v1' }),
       },
     );
-    expect(plan.status).toBe(201);
+    expect(resumePlan.status).toBe(201);
 
     const refused = await app.request(
       `http://localhost/api/v1/missions/${missionId}/plan-approval`,
       {
         method: 'POST',
-        headers: auth(bystander.token),
-        body: JSON.stringify({ content: 'not my job' }),
+        headers: auth(listed.token),
+        body: JSON.stringify({ content: 'should not be allowed' }),
       },
     );
     expect(refused.status).toBe(403);
     expect(((await refused.json()) as { error: string }).error).toBe('insufficient_scope');
-
-    const approved = await app.request(
-      `http://localhost/api/v1/missions/${missionId}/plan-approval`,
-      {
-        method: 'POST',
-        headers: auth(approver.token),
-        body: JSON.stringify({ content: 'Approved by the allowlisted approver' }),
-      },
-    );
-    expect(approved.status).toBe(201);
-    const body = (await approved.json()) as { summary: { type: string; client_id: string } };
-    expect(body.summary.type).toBe('plan_approval');
-    expect(body.summary.client_id).toBe('approver-db');
   });
 
   it('grants nothing beyond approvals:human to the allowlisted client', async () => {

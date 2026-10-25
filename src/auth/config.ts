@@ -114,6 +114,22 @@ export function loadApproverClients(
   );
 }
 
+/**
+ * Allowlisted ids that no environment client carries.
+ *
+ * The allowlist grants nothing by itself: it only promotes a client declared in
+ * `MISSION_HUB_CLIENTS_JSON`. A typo therefore becomes a silent `403` on plan
+ * approval — the exact failure this whole mechanism exists to end — so the boot
+ * line has to name it.
+ */
+export function findOrphanApprovers(
+  approvers: ReadonlySet<string>,
+  credentials: readonly ClientCredential[],
+): string[] {
+  const declared = new Set(credentials.map((credential) => credential.clientId));
+  return [...approvers].filter((clientId) => !declared.has(clientId)).sort();
+}
+
 export function loadClientCredentials(
   raw = process.env.MISSION_HUB_CLIENTS_JSON,
   approvers: ReadonlySet<string> = new Set<string>(),
