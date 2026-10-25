@@ -117,7 +117,7 @@ Legacy records remain unclassified unless a later explicit migration classifies 
 
 Lifecycle maps to Bearer scopes: `missions:*`, `runs:*`, `summaries:*`, `evidence:*`.  
 `clients:admin` = mint/revoke. `verify:admin` = staging-only fixture cleanup.  
-`approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: only an env-issued credential (`MISSION_HUB_CLIENTS_JSON`) can carry it — clients resolved from `api_clients` drop privileged scopes at authentication.
+`approvals:human` (new in contract v1.2) = record human plan approvals (`missions.planApproval` / `POST /api/v1/missions/:id/plan-approval`). It is **mint-forbidden** (`POST /admin/clients` rejects it) and **privileged**: no scope bundle grants it, and a scope stored on an `api_clients` row is dropped at authentication like any other privileged one. The only path is the operator allowlist **`MISSION_HUB_APPROVER_CLIENTS`** (comma-separated client ids): a client named there holds `approvals:human` and nothing more. Before that allowlist existed the scope was unreachable from every source, so the endpoint answered `403 insufficient_scope` to every principal — do not describe this scope as env-granted.
 
 ### Refusal contract
 
