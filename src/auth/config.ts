@@ -130,6 +130,23 @@ export function findOrphanApprovers(
   return [...approvers].filter((clientId) => !declared.has(clientId)).sort();
 }
 
+/**
+ * How many clients can actually approve a plan right now.
+ *
+ * An allowlist entry only counts when an environment client carries that id, so this
+ * is the size of the intersection — not the length of the allowlist. Reporting the
+ * length would claim an approver that cannot authenticate.
+ */
+export function countEffectiveApprovers(
+  approvers: ReadonlySet<string> | undefined,
+  credentials: readonly ClientCredential[],
+): number {
+  if (!approvers || approvers.size === 0) {
+    return 0;
+  }
+  return credentials.filter((credential) => approvers.has(credential.clientId)).length;
+}
+
 export function loadClientCredentials(
   raw = process.env.MISSION_HUB_CLIENTS_JSON,
   approvers: ReadonlySet<string> = new Set<string>(),

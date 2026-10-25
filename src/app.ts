@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import {
   ALL_SERVICE_SCOPES,
+  countEffectiveApprovers,
   parseScopes,
   type Principal,
   type Scope,
@@ -453,6 +454,10 @@ export function createApp(
   // Liveness + build identity: which version, contract revision and commit is
   // actually answering. Read-only, unauthenticated, and deliberately free of
   // store access so it answers even when the database is unhealthy.
+  // `approvers` is a count, never the ids: a deployment whose allowlist is empty has a
+  // dead plan-approval route, and a caller must be able to tell that apart from a
+  // client simply lacking the scope. Both used to answer the same bare 403.
+  const approverCount = countEffectiveApprovers(options.approverClients, options.envCredentials ?? []);
   app.get('/health', (c) =>
     c.json({
       status: 'ok',
@@ -460,6 +465,7 @@ export function createApp(
       contract: readContractVersion(),
       commit: readCommit(),
       env: getEnv(),
+      approvers: approverCount,
     }),
   );
 

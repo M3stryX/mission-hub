@@ -31,9 +31,12 @@ describe('GET /health', () => {
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as Record<string, unknown>;
-    // The exact payload: liveness plus the build identity — no configuration,
-    // credential or any other field of the running environment.
+    // The exact payload: liveness, the build identity, and `approvers` — a COUNT of
+    // configured approvers, never an id, a token or any other configuration value.
+    // The count exists so a deployment with a dead approval route is visible instead
+    // of answering the same bare 403 as an under-scoped client.
     expect(Object.keys(body).sort()).toEqual([
+      'approvers',
       'commit',
       'contract',
       'env',
@@ -49,6 +52,8 @@ describe('GET /health', () => {
       // single source for it, so the test never restates the rule.
       commit: readCommit(),
       env: 'development',
+      // No allowlist in this app: the dead approval route must be visible as 0.
+      approvers: 0,
     });
   });
 
