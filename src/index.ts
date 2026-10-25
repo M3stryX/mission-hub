@@ -17,6 +17,7 @@ import {
   runMigrationsWithRetry,
 } from './boot.js';
 import {
+  countEffectiveApprovers,
   findOrphanApprovers,
   loadAdminToken,
   loadApproverClients,
@@ -103,6 +104,12 @@ const orphanApprovers = findOrphanApprovers(approverClients, envCredentials);
 if (orphanApprovers.length > 0) {
   console.error(
     `[mission-hub] MISSION_HUB_APPROVER_CLIENTS names no environment client: ${orphanApprovers.join(',')} — those ids keep answering 403 insufficient_scope on plan approval`,
+  );
+}
+const effectiveApprovers = countEffectiveApprovers(approverClients, envCredentials);
+if (effectiveApprovers === 0) {
+  console.error(
+    '[mission-hub] no approver configured: plan approval will answer 403 insufficient_scope to EVERY principal. Set MISSION_HUB_APPROVER_CLIENTS to an environment client id to enable it.',
   );
 }
 const seeded = await seedEnvClients(store, envCredentials);

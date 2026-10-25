@@ -2,9 +2,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createApp } from '../src/app.js';
 import {
+  countEffectiveApprovers,
   findOrphanApprovers,
   loadApproverClients,
   loadClientCredentials,
+  type ClientCredential,
   type Scope,
 } from '../src/auth/config.js';
 import { resolvePrincipal } from '../src/auth/resolve.js';
@@ -58,6 +60,46 @@ describe('approver allowlist parsing', () => {
       'typo-approver',
     ]);
     expect(findOrphanApprovers(new Set(['declared-approver']), credentials)).toEqual([]);
+  });
+});
+
+describe('approver visibility on /health', () => {
+  // /health never touches the database; a dedicated pool keeps this block independent.
+  const healthPool = new Pool({ connectionString: databaseUrl });
+  const store = new MissionHubStore(healthPool);
+  afterAll(async () => {
+    await healthPool.end();
+  });
+  const base: ClientCredential[] = [
+    { clientId: 'env-approver', token: 't1', scopes: new Set(baseScopes) },
+    { clientId: 'env-other', token: 't2', scopes: new Set(baseScopes) },
+  ];
+
+  it('counts only allowlisted ids that an environment client actually declares', () => {
+    expect(countEffectiveApprovers(new Set(['env-approver']), base)).toBe(1);
+    expect(countEffectiveApprovers(new Set(['env-approver', 'typo']), base)).toBe(1);
+    expect(countEffectiveApprovers(new Set(['typo']), base)).toBe(0);
+    expect(countEffectiveApprovers(new Set(), base)).toBe(0);
+    expect(countEffectiveApprovers(undefined, base)).toBe(0);
+  });
+
+  it('reports 0 when no allowlist is configured, so a dead approval route is visible', async () => {
+    const app = createApp(store, { envCredentials: base });
+    const res = await app.request('http://localhost/health', { headers: { Host: 'localhost' } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { approvers?: number };
+    expect(body.approvers).toBe(0);
+  });
+
+  it('reports the number of effective approvers, never their ids', async () => {
+    const app = createApp(store, {
+      envCredentials: base,
+      approverClients: new Set(['env-approver', 'typo-approver']),
+    });
+    const res = await app.request('http://localhost/health', { headers: { Host: 'localhost' } });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.approvers).toBe(1);
+    expect(JSON.stringify(body)).not.toContain('env-approver');
   });
 });
 
