@@ -173,6 +173,12 @@ export class ClaimConflictError extends Error {
   }
 }
 
+
+/** Message lisible par l'agent lorsqu'un claim conflict est détecté. */
+export function formatClaimConflictError(error: ClaimConflictError): string {
+  return `Mission #${error.missionId} already has an active claim #${error.claimId}. Use a different mission or release the existing claim first.`;
+}
+
 export class ClaimNotOwnedError extends Error {
   readonly claimId: number;
 
