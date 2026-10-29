@@ -28,6 +28,7 @@ import {
   ClaimReleaseIncompleteError,
   ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
+  formatClaimConflictError,
   MAX_CLAIM_LEASE_SECONDS,
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
@@ -832,6 +833,7 @@ export function createApp(
         return c.json(
           {
             error: 'claim_conflict',
+            message: formatClaimConflictError(error),
             missionId: error.missionId,
             claimId: error.claimId,
           },
