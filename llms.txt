@@ -1,0 +1,34 @@
+# Mission Hub — agent index
+
+Standalone mission + execution-trace service: durable missions, claims/leases, runs, summaries and
+evidence, exposed through **two parity surfaces**, REST and MCP. Product version `0.1.0`, agent
+contract revision `v3.2`.
+
+## Read first
+
+- [`docs/AGENT_USAGE.md`](./docs/AGENT_USAGE.md) — how agents use the service
+- [`docs/AGENT_ROLES.md`](./docs/AGENT_ROLES.md) — role and scope model
+- [`docs/AUTONOMOUS_AGENTS.md`](./docs/AUTONOMOUS_AGENTS.md) — unattended workflows
+- [`docs/RUNTIME_ADAPTERS.md`](./docs/RUNTIME_ADAPTERS.md) — per-runtime integration
+- [`docs/contract-inventory.json`](./docs/contract-inventory.json) — machine inventory of enums, scopes, tables, routes, MCP tools
+- [`AGENTS.md`](./AGENTS.md) — repository rules for agents
+
+## Invariants
+
+- **REST ↔ MCP parity.** Every agent-facing read/write exists on both surfaces unless documented
+  otherwise; `pnpm test:contract-inventory` fails on drift.
+- **Missions are never closed by an agent.** State transitions to `done` are an operator decision.
+- **Claims are leases, not locks.** `mission.status` never acts as a mutex; reclaim goes through
+  expiry and fencing.
+- **Evidence, not prose.** A claimed result carries a run, a typed summary and evidence references.
+
+## Commands
+
+```bash
+pnpm dev
+pnpm db:migrate
+pnpm test
+pnpm test:contract-inventory   # contract drift gate
+pnpm typecheck
+pnpm lint
+```
