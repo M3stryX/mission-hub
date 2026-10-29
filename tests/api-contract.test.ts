@@ -18,6 +18,7 @@ const allScopes: Scope[] = [
 
 describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   const pool = new Pool({ connectionString: databaseUrl });
+  let store: MissionHubStore;
   const credentials: ClientCredential[] = [
     { clientId: 'contract-test', token: 'contract-token', scopes: new Set(allScopes) },
   ];
@@ -39,6 +40,7 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
   };
 
   beforeEach(async () => {
+    store = new MissionHubStore(pool);
     await pool.query('TRUNCATE evidence, summaries, execution_events, mission_claims, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
   });
 
@@ -804,6 +806,21 @@ describe.skipIf(!databaseUrl)('REST API v1 contracts', () => {
       },
     );
     expect(conflict.status).toBe(409);
+    const conflictBody = await conflict.json();
+    expect(conflictBody).toEqual({
+      error: 'claim_conflict',
+      message: `Mission #${mission.mission.id} already has an active claim #${first.claim.id}. Inspect the claim via missions.claim.get, wait for it to be released or expire, or choose another mission.`,
+      missionId: mission.mission.id,
+      claimId: first.claim.id,
+    });
+    // Verify no new run/claim was created and the original claim remains active
+    const activeClaimAfterConflict = await store.getActiveClaim(mission.mission.id);
+    expect(activeClaimAfterConflict).not.toBeNull();
+    expect(activeClaimAfterConflict?.id).toBe(first.claim.id);
+    expect(activeClaimAfterConflict?.client_id).toBe('contract-test');
+    const runsAfterConflict = await store.listRunsForMission(mission.mission.id);
+    expect(runsAfterConflict.length).toBe(1);
+    expect(runsAfterConflict[0].id).toBe(first.run.id);
 
     const renewed = await app.request(
       `http://localhost/api/v1/claims/${first.claim.id}/renew`,

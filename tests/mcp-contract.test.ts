@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { createApp } from '../src/app.js';
 import type { ClientCredential, Scope } from '../src/auth/config.js';
 import { MissionHubStore } from '../src/db/store.js';
+import { formatClaimConflictError, ClaimConflictError, type MissionHubStore as MissionHubStoreType } from '../src/db/store.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const allScopes: Scope[] = [
@@ -19,6 +20,7 @@ const allScopes: Scope[] = [
 
 describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
   const pool = new Pool({ connectionString: databaseUrl });
+  let store: MissionHubStoreType;
   const credentials: ClientCredential[] = [
     { clientId: 'mcp-test', token: 'mcp-token', scopes: new Set(allScopes) },
   ];
@@ -27,6 +29,7 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
   });
 
   beforeEach(async () => {
+    store = new MissionHubStore(pool);
     await pool.query('TRUNCATE evidence, summaries, execution_events, mission_claims, execution_runs, agent_sessions, mission_events, mission_sources, mission_checklist_items, missions, api_clients RESTART IDENTITY CASCADE');
   });
 
@@ -195,5 +198,108 @@ describe.skipIf(!databaseUrl)('MCP v1 agent contract', () => {
     expect(invalid.isError).toBe(true);
 
     await client.close();
+  });
+
+  it('returns structured claim_conflict error with actionable message via MCP', async () => {
+    const client = new Client(
+      { name: 'mission-hub-claim-conflict-test', version: '1.0.0' },
+      { versionNegotiation: { mode: 'auto' } },
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL('http://localhost/mcp'),
+      {
+        requestInit: { headers: { Authorization: 'Bearer mcp-token' } },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const headers = new Headers(request.headers);
+          headers.set('host', 'localhost');
+          return app.fetch(new Request(request, { headers }));
+        },
+      },
+    );
+
+    await client.connect(transport);
+
+    // Create a mission
+    const created = await client.callTool({
+      name: 'missions.create',
+      arguments: { title: 'MCP claim conflict mission', status: 'todo', priority: 1 },
+    });
+    expect(created.isError).not.toBe(true);
+    const missionId = (created.structuredContent as { result: { id: number } }).result.id;
+
+    // First claim succeeds
+    const firstClaim = await client.callTool({
+      name: 'missions.claim',
+      arguments: {
+        missionId,
+        runtime: 'cursor',
+        agent: 'first-agent',
+        externalSessionId: 'mcp-session-1',
+        externalRunId: 'mcp-run-1',
+      },
+    });
+    expect(firstClaim.isError).not.toBe(true);
+    const firstClaimId = (firstClaim.structuredContent as { result: { claim: { id: number } } }).result.claim.id;
+
+    // Create a second client with different token to simulate concurrent claim
+    const otherCredentials: ClientCredential[] = [
+      { clientId: 'mcp-test-other', token: 'mcp-token-other', scopes: new Set(allScopes) },
+    ];
+    const otherApp = createApp(new MissionHubStore(pool), { envCredentials: otherCredentials });
+    const otherTransport = new StreamableHTTPClientTransport(
+      new URL('http://localhost/mcp'),
+      {
+        requestInit: { headers: { Authorization: 'Bearer mcp-token-other' } },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const headers = new Headers(request.headers);
+          headers.set('host', 'localhost');
+          return otherApp.fetch(new Request(request, { headers }));
+        },
+      },
+    );
+    const otherClient = new Client(
+      { name: 'mission-hub-other-test', version: '1.0.0' },
+      { versionNegotiation: { mode: 'auto' } },
+    );
+    await otherClient.connect(otherTransport);
+
+    // Second client tries to claim the same mission - should get claim_conflict
+    const conflict = await otherClient.callTool({
+      name: 'missions.claim',
+      arguments: {
+        missionId,
+        runtime: 'cursor',
+        agent: 'other-agent',
+        externalSessionId: 'mcp-session-2',
+        externalRunId: 'mcp-run-2',
+      },
+    });
+
+    expect(conflict.isError).toBe(true);
+    const error = conflict.content?.[0] as { type: string; text: string } | undefined;
+    expect(error).toBeDefined();
+    const parsed = JSON.parse(error!.text);
+    expect(parsed.error).toBe('claim_conflict');
+    expect(parsed.missionId).toBe(missionId);
+    expect(parsed.claimId).toBe(firstClaimId);
+    expect(parsed.message).toBe(
+      formatClaimConflictError(
+        new ClaimConflictError(missionId, firstClaimId)
+      )
+    );
+
+    // Verify no new run/claim was created and the original claim remains active
+    const activeClaim = await store.getActiveClaim(missionId);
+    expect(activeClaim).not.toBeNull();
+    expect(activeClaim?.id).toBe(firstClaimId);
+    expect(activeClaim?.client_id).toBe('mcp-test');
+    const runs = await store.listRunsForMission(missionId);
+    expect(runs.length).toBe(1);
+    expect(runs[0].client_id).toBe('mcp-test');
+
+    await client.close();
+    await otherClient.close();
   });
 });

@@ -12,6 +12,7 @@ import {
   ClaimReleaseIncompleteError,
   ClaimReleaseInconsistentError,
   DuplicateSourcePathError,
+  formatClaimConflictError,
   MAX_CLAIM_LEASE_SECONDS,
   MISSION_LIST_MAX_LIMIT,
   PlanNotOpenError,
@@ -430,6 +431,7 @@ export function buildMcpServer(
       } catch (error) {
         if (error instanceof ClaimConflictError) {
           return toolError('claim_conflict', {
+            message: formatClaimConflictError(error),
             missionId: error.missionId,
             claimId: error.claimId,
           });
